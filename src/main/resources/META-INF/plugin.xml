@@ -1,6 +1,6 @@
 <idea-plugin>
-    <id>com.github.idea-claude-code-gui</id>
-    <name>CC GUI (Claude or Codex)</name>
+    <id>com.github.cqingwang.coding_assistant</id>
+    <name>Assistant</name>
     <vendor>MossX</vendor>
 
     <!-- Resource bundle for i18n -->
@@ -48,7 +48,7 @@
 
         <h2>使用方法</h2>
         <ul>
-            <li>从右侧边栏打开 CC GUI 工具窗口</li>
+            <li>从右侧边栏打开 Assistant 工具窗口</li>
             <li>选中代码后使用 <kbd>Ctrl+Alt+K</kbd>（Win/Linux）或 <kbd>Cmd+Alt+K</kbd>（Mac）发送给 AI</li>
             <li>即时获得 AI 驱动的代码辅助和智能建议</li>
         </ul>
@@ -71,8 +71,8 @@
     <depends optional="true" config-file="python-features.xml">com.intellij.modules.python</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <!-- CC GUI tool window (includes history feature) -->
-        <toolWindow id="CCG"
+        <!-- Assistant tool window (includes history feature) -->
+        <toolWindow id="Assistant"
                     anchor="right"
                     factoryClass="com.github.claudecodegui.ui.toolwindow.ClaudeSDKToolWindow"
                     icon="/icons/cc-gui-icon.svg"
@@ -92,12 +92,12 @@
                                 implementation="com.github.claudecodegui.notifications.ClaudeStatusBarWidget$Factory"/>
 
         <!-- Notification group for DevTools and other balloon notifications -->
-        <notificationGroup id="CC GUI Notifications" displayType="BALLOON"/>
+        <notificationGroup id="Assistant Notifications" displayType="BALLOON"/>
     </extensions>
 
     <actions>
-        <!-- Action to send selected code to CC GUI -->
-        <action id="ClaudeCodeGUI.SendSelectionToTerminalAction"
+        <!-- Action to send selected code to Assistant -->
+        <action id="coding_assistant.SendSelectionToTerminalAction"
                 class="com.github.claudecodegui.action.editor.SendSelectionToTerminalAction"
                 icon="/icons/cc-gui-icon.svg">
             <!-- Add to editor context menu (displayed at the top) -->
@@ -108,58 +108,58 @@
         </action>
 
         <!-- Copy AI Reference Action -->
-        <action id="ClaudeCodeGUI.CopySelectionReferenceAction"
+        <action id="coding_assistant.CopySelectionReferenceAction"
                 class="com.github.claudecodegui.action.editor.CopySelectionReferenceAction"
                 icon="/icons/cc-gui-icon.svg">
             <add-to-group group-id="EditorPopupMenu"
                            anchor="after"
-                           relative-to-action="ClaudeCodeGUI.SendSelectionToTerminalAction"/>
+                           relative-to-action="coding_assistant.SendSelectionToTerminalAction"/>
         </action>
 
         <!-- Quick Fix with Claude Action -->
-        <action id="ClaudeCodeGUI.QuickFixWithClaudeAction"
+        <action id="coding_assistant.QuickFixWithClaudeAction"
                 class="com.github.claudecodegui.action.editor.QuickFixWithClaudeAction"
                 icon="/icons/cc-gui-icon.svg">
             <add-to-group group-id="EditorPopupMenu"
                            anchor="after"
-                           relative-to-action="ClaudeCodeGUI.SendSelectionToTerminalAction"/>
+                           relative-to-action="coding_assistant.SendSelectionToTerminalAction"/>
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift Q"/>
             <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift Q"/>
             <keyboard-shortcut keymap="macOS" first-keystroke="meta shift Q"/>
         </action>
 
         <!-- Create New Tab Action (can be invoked via Find Action or programmatically) -->
-        <action id="ClaudeCodeGUI.CreateNewTabAction"
+        <action id="coding_assistant.CreateNewTabAction"
                 class="com.github.claudecodegui.action.tab.CreateNewTabAction"
                 icon="AllIcons.General.Add"/>
 
         <!-- Rename Tab Action -->
-        <action id="ClaudeCodeGUI.RenameTabAction"
+        <action id="coding_assistant.RenameTabAction"
                 class="com.github.claudecodegui.action.tab.RenameTabAction"
                 icon="AllIcons.Actions.Edit"/>
 
         <!-- Detach Tab Action -->
-        <action id="ClaudeCodeGUI.DetachTabAction"
+        <action id="coding_assistant.DetachTabAction"
                 class="com.github.claudecodegui.action.tab.DetachTabAction"
                 icon="AllIcons.Actions.MoveToWindow"/>
 
         <!-- Save As Template Action -->
-        <action id="ClaudeCodeGUI.SaveAsTemplateAction"
+        <action id="coding_assistant.SaveAsTemplateAction"
                 class="com.github.claudecodegui.action.SaveAsTemplateAction"
                 icon="/icons/cc-gui-icon.svg"/>
 
         <!-- Create From Template Action -->
-        <action id="ClaudeCodeGUI.CreateFromTemplateAction"
+        <action id="coding_assistant.CreateFromTemplateAction"
                 class="com.github.claudecodegui.action.CreateFromTemplateAction"
                 icon="AllIcons.Actions.AddMulticaret"/>
 
         <!-- Open DevTools Action for JCEF debugging -->
-        <action id="ClaudeCodeGUI.OpenDevToolsAction"
+        <action id="coding_assistant.OpenDevToolsAction"
                 class="com.github.claudecodegui.action.dev.OpenDevToolsAction"
                 icon="AllIcons.Xml.Browsers.Chromium"/>
 
         <!-- Action to send file path from the file tree to the input box -->
-        <action id="ClaudeCodeGUI.SendFilePathToInputAction"
+        <action id="coding_assistant.SendFilePathToInputAction"
                 class="com.github.claudecodegui.action.editor.SendFilePathToInputAction"
                 icon="/icons/cc-gui-icon.svg">
             <!-- Add to project file tree and editor tab context menus -->
@@ -167,23 +167,23 @@
             <add-to-group group-id="EditorTabPopupMenu" anchor="first"/>
         </action>
 
-        <!-- Action to send the selected console text to CC GUI -->
-        <action id="ClaudeCodeGUI.SendConsoleSelectionToInputAction"
+        <!-- Action to send the selected console text to Assistant -->
+        <action id="coding_assistant.SendConsoleSelectionToInputAction"
                 class="com.github.claudecodegui.action.console.SendConsoleSelectionToInputAction"
                 icon="/icons/cc-gui-icon.svg">
             <add-to-group group-id="ConsoleView.PopupMenu" anchor="last"/>
         </action>
 
         <!-- Generate Commit Message with AI Action -->
-        <action id="ClaudeCodeGUI.GenerateCommitMessageAction"
+        <action id="coding_assistant.GenerateCommitMessageAction"
                 class="com.github.claudecodegui.action.vcs.GenerateCommitMessageAction"
                 icon="/icons/logo-16.png">
             <!-- Add to VCS Commit toolbar -->
             <add-to-group group-id="Vcs.MessageActionGroup" anchor="last"/>
         </action>
 
-        <!-- Chat tool window clipboard actions (scoped to CCG tool window) -->
-        <action id="ClaudeCodeGUI.ChatCopyAction"
+        <!-- Chat tool window clipboard actions (scoped to Assistant tool window) -->
+        <action id="coding_assistant.ChatCopyAction"
                 class="com.github.claudecodegui.action.ChatCopyAction"
                 text="Copy (Chat Window)"
                 description="Copy selected text in Claude chat window">
@@ -191,7 +191,7 @@
             <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta C"/>
             <keyboard-shortcut keymap="macOS" first-keystroke="meta C"/>
         </action>
-        <action id="ClaudeCodeGUI.ChatCutAction"
+        <action id="coding_assistant.ChatCutAction"
                 class="com.github.claudecodegui.action.ChatCutAction"
                 text="Cut (Chat Window)"
                 description="Cut selected text in Claude chat window">
@@ -199,7 +199,7 @@
             <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta X"/>
             <keyboard-shortcut keymap="macOS" first-keystroke="meta X"/>
         </action>
-        <action id="ClaudeCodeGUI.ChatPasteAction"
+        <action id="coding_assistant.ChatPasteAction"
                 class="com.github.claudecodegui.action.ChatPasteAction"
                 text="Paste (Chat Window)"
                 description="Paste clipboard text in Claude chat window">
@@ -209,13 +209,13 @@
         </action>
 
         <!-- Chat tool window send action (no default shortcut; dynamically managed by SendShortcutSync) -->
-        <action id="ClaudeCodeGUI.ChatSendAction"
+        <action id="coding_assistant.ChatSendAction"
                 class="com.github.claudecodegui.action.ChatSendAction"
                 text="Send Message (Chat Window)"
                 description="Send message in Claude chat window"/>
 
         <!-- Chat tool window newline action (Shift+Enter always newline; Ctrl+Enter dynamically managed by SendShortcutSync) -->
-        <action id="ClaudeCodeGUI.ChatNewlineAction"
+        <action id="coding_assistant.ChatNewlineAction"
                 class="com.github.claudecodegui.action.ChatNewlineAction"
                 text="Insert Newline (Chat Window)"
                 description="Insert newline in Claude chat window input">
@@ -225,7 +225,7 @@
         </action>
 
         <!--
-          Hide CC GUI Panel. A standalone action with NO default keyboard shortcut: users may bind one
+          Hide Assistant Panel. A standalone action with NO default keyboard shortcut: users may bind one
           in Settings | Keymap to hide the tool window while focus is in the IDE (e.g. the editor).
           NOTE: The Shift+Esc shortcut that hides the panel while focus is INSIDE the webview is
           implemented separately in WebviewInitializer via a JS keydown listener
@@ -233,9 +233,9 @@
           action. Shift+Esc is intentionally not registered here to avoid clashing with the IDE's
           built-in HideActiveWindow shortcut.
         -->
-        <action id="ClaudeCodeGUI.HidePanelAction"
+        <action id="coding_assistant.HidePanelAction"
                 class="com.github.claudecodegui.action.HidePanelAction"
-                text="Hide CC GUI Panel"
-                description="Hide the CC GUI tool window panel"/>
+                text="Hide Assistant Panel"
+                description="Hide the Assistant tool window panel"/>
     </actions>
 </idea-plugin>

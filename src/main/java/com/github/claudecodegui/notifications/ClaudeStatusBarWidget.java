@@ -81,7 +81,7 @@ public class ClaudeStatusBarWidget implements CustomStatusBarWidget, StatusBarWi
                 @Override
                 public void mouseClicked(MouseEvent e) {
                     if (project.isDisposed()) { return; }
-                    var toolWindow = ToolWindowManager.getInstance(project).getToolWindow("CCG");
+                    var toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Assistant");
                     if (toolWindow != null) {
                         toolWindow.activate(null);
                     }

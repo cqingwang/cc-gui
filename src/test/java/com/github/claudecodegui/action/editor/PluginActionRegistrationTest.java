@@ -18,7 +18,7 @@ public class PluginActionRegistrationTest {
 
     @Test
     public void sendFilePathActionAppearsInProjectTreeAndEditorTabMenus() throws Exception {
-        Set<String> groupIds = getActionGroupIds("ClaudeCodeGUI.SendFilePathToInputAction");
+        Set<String> groupIds = getActionGroupIds("coding_assistant.SendFilePathToInputAction");
 
         Assert.assertTrue(groupIds.contains("ProjectViewPopupMenu"));
         Assert.assertTrue(groupIds.contains("EditorTabPopupMenu"));
@@ -26,8 +26,8 @@ public class PluginActionRegistrationTest {
 
     @Test
     public void copySelectionReferenceActionAppearsInEditorPopupMenuAfterSendSelectionAction() throws Exception {
-        ActionRegistration action = getActionRegistration("ClaudeCodeGUI.CopySelectionReferenceAction");
-        ActionRegistration quickFixAction = getActionRegistration("ClaudeCodeGUI.QuickFixWithClaudeAction");
+        ActionRegistration action = getActionRegistration("coding_assistant.CopySelectionReferenceAction");
+        ActionRegistration quickFixAction = getActionRegistration("coding_assistant.QuickFixWithClaudeAction");
 
         Assert.assertEquals(
                 "com.github.claudecodegui.action.editor.CopySelectionReferenceAction",
@@ -35,15 +35,15 @@ public class PluginActionRegistrationTest {
         );
         AddToGroupRegistration editorPopup = action.getAddToGroup("EditorPopupMenu");
         Assert.assertEquals("after", editorPopup.anchor);
-        Assert.assertEquals("ClaudeCodeGUI.SendSelectionToTerminalAction", editorPopup.relativeToAction);
+        Assert.assertEquals("coding_assistant.SendSelectionToTerminalAction", editorPopup.relativeToAction);
         Assert.assertTrue(action.declarationIndex < quickFixAction.declarationIndex);
     }
 
     @Test
     public void editorPopupActionsUseExpectedIcons() throws Exception {
-        ActionRegistration sendSelectionAction = getActionRegistration("ClaudeCodeGUI.SendSelectionToTerminalAction");
-        ActionRegistration copyReferenceAction = getActionRegistration("ClaudeCodeGUI.CopySelectionReferenceAction");
-        ActionRegistration quickFixAction = getActionRegistration("ClaudeCodeGUI.QuickFixWithClaudeAction");
+        ActionRegistration sendSelectionAction = getActionRegistration("coding_assistant.SendSelectionToTerminalAction");
+        ActionRegistration copyReferenceAction = getActionRegistration("coding_assistant.CopySelectionReferenceAction");
+        ActionRegistration quickFixAction = getActionRegistration("coding_assistant.QuickFixWithClaudeAction");
 
         Assert.assertEquals("/icons/cc-gui-icon.svg", sendSelectionAction.icon);
         Assert.assertEquals("/icons/cc-gui-icon.svg", copyReferenceAction.icon);
@@ -52,8 +52,8 @@ public class PluginActionRegistrationTest {
 
     @Test
     public void sessionTemplateActionsAreRegistered() throws Exception {
-        ActionRegistration saveAsTemplateAction = getActionRegistration("ClaudeCodeGUI.SaveAsTemplateAction");
-        ActionRegistration createFromTemplateAction = getActionRegistration("ClaudeCodeGUI.CreateFromTemplateAction");
+        ActionRegistration saveAsTemplateAction = getActionRegistration("coding_assistant.SaveAsTemplateAction");
+        ActionRegistration createFromTemplateAction = getActionRegistration("coding_assistant.CreateFromTemplateAction");
 
         Assert.assertEquals("com.github.claudecodegui.action.SaveAsTemplateAction", saveAsTemplateAction.actionClass);
         Assert.assertEquals("com.github.claudecodegui.action.CreateFromTemplateAction", createFromTemplateAction.actionClass);
@@ -81,7 +81,7 @@ public class PluginActionRegistrationTest {
         Assert.assertTrue("JCEF must be optional for IDEs without the standalone module",
                 hasOptionalJcefDependency);
 
-        ActionRegistration saveAsTemplateAction = getActionRegistration("ClaudeCodeGUI.SaveAsTemplateAction");
+        ActionRegistration saveAsTemplateAction = getActionRegistration("coding_assistant.SaveAsTemplateAction");
         Assert.assertEquals("/icons/cc-gui-icon.svg", saveAsTemplateAction.icon);
     }
 

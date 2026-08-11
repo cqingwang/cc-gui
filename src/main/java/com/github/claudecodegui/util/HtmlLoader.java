@@ -173,7 +173,7 @@ public class HtmlLoader {
             "<html>" +
             "<head>" +
             "<meta charset=\"UTF-8\">" +
-            "<title>CC GUI（Claude or Codex）</title>" +
+            "<title>Assistant（Claude or Codex）</title>" +
             "<style>" +
             "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; " +
             "background: #1e1e1e; color: #fff; display: flex; align-items: center; " +

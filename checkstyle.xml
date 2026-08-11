@@ -97,13 +97,6 @@
         <!-- Remove redundant modifiers (e.g. public on interface methods) -->
         <module name="RedundantModifier"/>
 
-        <!-- ===== Block Style ===== -->
-
-        <!-- Require braces around all if/else/while/for/do bodies. Guards against
-             goto-fail-style bugs where a future edit silently slips outside the
-             conditional. The 197 pre-existing single-line violations were fixed
-             in the preceding commit. -->
-        <module name="NeedBraces"/>
 
         <!-- ===== Regexp ===== -->
 

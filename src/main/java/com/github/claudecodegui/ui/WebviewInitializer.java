@@ -309,7 +309,7 @@ public class WebviewInitializer {
                 return handleClipboardPathRequest();
             });
 
-            // Create a dedicated JSQuery for hiding the CCG panel via Shift+Esc
+            // Create a dedicated JSQuery for hiding the Assistant panel via Shift+Esc
             currentBridges.hidePanelQuery.addHandler((msg) -> {
                 synchronized (this.bridgeLock) {
                     if (host.isDisposed() || this.bridges != currentBridges
@@ -332,7 +332,7 @@ public class WebviewInitializer {
                     if (project == null || project.isDisposed()) {
                         return;
                     }
-                    ToolWindow toolWindow = ToolWindowManager.getInstance(project).getToolWindow("CCG");
+                    ToolWindow toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Assistant");
                     if (toolWindow != null && toolWindow.isVisible()) {
                         toolWindow.hide();
                     }

@@ -16,12 +16,12 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * Abstract base class for actions scoped to the Claude chat tool window.
- * Only enabled when the CCG tool window is active and focused.
+ * Only enabled when the Assistant tool window is active and focused.
  */
 public abstract class ChatToolWindowAction extends AnAction implements DumbAware {
 
     private static final Logger LOG = Logger.getInstance(ChatToolWindowAction.class);
-    private static final String TOOL_WINDOW_ID = "CCG";
+    private static final String TOOL_WINDOW_ID = "Assistant";
 
     @Override
     public @NotNull ActionUpdateThread getActionUpdateThread() {
@@ -58,7 +58,7 @@ public abstract class ChatToolWindowAction extends AnAction implements DumbAware
     protected abstract void performAction(@NotNull AnActionEvent e, @NotNull Project project, @NotNull ClaudeChatWindow chatWindow);
 
     /**
-     * Check if the CCG tool window is currently active (focused).
+     * Check if the Assistant tool window is currently active (focused).
      */
     private boolean isChatToolWindowActive(@NotNull Project project) {
         ToolWindowManager twm = ToolWindowManager.getInstance(project);

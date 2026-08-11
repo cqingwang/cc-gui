@@ -20,7 +20,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Action to rename the current tab in the CC GUI tool window.
+ * Action to rename the current tab in the Assistant tool window.
  * Implements DumbAware interface to allow renaming during indexing.
  */
 public class RenameTabAction extends AnAction implements DumbAware {
@@ -54,7 +54,7 @@ public class RenameTabAction extends AnAction implements DumbAware {
             return;
         }
 
-        ToolWindow toolWindow = ToolWindowManager.getInstance(project).getToolWindow("CCG");
+        ToolWindow toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Assistant");
         if (toolWindow == null) {
             LOG.warn("[RenameTabAction] Tool window not found");
             return;
@@ -118,7 +118,7 @@ public class RenameTabAction extends AnAction implements DumbAware {
             return;
         }
 
-        ToolWindow toolWindow = ToolWindowManager.getInstance(project).getToolWindow("CCG");
+        ToolWindow toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Assistant");
         if (toolWindow == null) {
             e.getPresentation().setEnabledAndVisible(false);
             return;

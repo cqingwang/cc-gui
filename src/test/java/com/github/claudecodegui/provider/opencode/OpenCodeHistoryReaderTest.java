@@ -135,7 +135,7 @@ public class OpenCodeHistoryReaderTest {
         Path db = root.resolve("opencode.db");
 
         String sessionId = "ses_db_hello1";
-        String projectPath = "/Users/me/Desktop/CC GUI 项目/jetbrains-cc-gui";
+        String projectPath = "/Users/me/Desktop/Assistant 项目/jetbrains-cc-gui";
         String userMsgId = "msg_db_user1";
         String asstMsgId = "msg_db_asst1";
 

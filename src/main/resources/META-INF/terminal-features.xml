@@ -1,6 +1,6 @@
 <idea-plugin>
     <!--
-    Terminal-specific features for CC GUI（Claude or Codex）.
+    Terminal-specific features for Assistant（Claude or Codex）.
     This configuration is only loaded when the Terminal plugin is available.
     -->
     <extensions defaultExtensionNs="com.intellij">
@@ -9,7 +9,7 @@
     </extensions>
 
     <actions>
-        <action id="ClaudeCodeGUI.SendTerminalSelectionToInputAction"
+        <action id="coding_assistant.SendTerminalSelectionToInputAction"
                 class="com.github.claudecodegui.terminal.SendTerminalSelectionToInputAction"
                 icon="/icons/cc-gui-icon.svg">
             <add-to-group group-id="Terminal.OutputContextMenu" anchor="last"/>
