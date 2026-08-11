@@ -9,6 +9,8 @@ import type { McpServer, McpPreset } from '../../types/mcp';
 import { sendToJava } from '../../utils/bridge';
 import { McpServerDialog } from './McpServerDialog';
 import { McpPresetDialog } from './McpPresetDialog';
+import { McpMarketplaceDialog } from './McpMarketplaceDialog';
+import { McpImportDialog } from './McpImportDialog';
 import { McpHelpDialog } from './McpHelpDialog';
 import { McpConfirmDialog } from './McpConfirmDialog';
 import { McpLogDialog } from './McpLogDialog';
@@ -26,16 +28,66 @@ import { useToolsUpdate } from './hooks/useToolsUpdate';
 
 // Sub-components
 import { ServerCard } from './ServerCard';
+import { getMcpMessagePrefix, resolveInitialMcpProvider, type McpProvider } from './providerSelection';
 
 /**
  * MCP Server Settings Component
  */
 export function McpSettingsSection({ currentProvider = 'claude' }: McpSettingsSectionProps) {
+  const [selectedProvider, setSelectedProvider] = useState<McpProvider>(() => {
+    let savedProvider: string | null = null;
+    try {
+      savedProvider = localStorage.getItem('mcp.selectedProvider');
+    } catch {
+      // Fall back to the active chat provider when storage is unavailable.
+    }
+    return resolveInitialMcpProvider(currentProvider, savedProvider);
+  });
+
+  const selectProvider = useCallback((provider: McpProvider) => {
+    setSelectedProvider(provider);
+    try {
+      localStorage.setItem('mcp.selectedProvider', provider);
+    } catch {
+      // The selection remains valid for this settings session.
+    }
+  }, []);
+
+  return (
+    <div className="mcp-settings-shell">
+      <div className="mcp-provider-tabs" role="tablist" aria-label="MCP provider">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={selectedProvider === 'claude'}
+          className={selectedProvider === 'claude' ? 'active' : ''}
+          onClick={() => selectProvider('claude')}
+        >
+          <span className="codicon codicon-hubot" aria-hidden="true" />
+          Claude
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={selectedProvider === 'codex'}
+          className={selectedProvider === 'codex' ? 'active' : ''}
+          onClick={() => selectProvider('codex')}
+        >
+          <span className="codicon codicon-terminal" aria-hidden="true" />
+          Codex
+        </button>
+      </div>
+      <McpProviderPanel key={selectedProvider} currentProvider={selectedProvider} />
+    </div>
+  );
+}
+
+function McpProviderPanel({ currentProvider }: { currentProvider: McpProvider }) {
   const { t } = useTranslation();
   const isCodexMode = currentProvider === 'codex';
 
   // Generate message type prefix based on provider
-  const messagePrefix = useMemo(() => (isCodexMode ? 'codex_' : ''), [isCodexMode]);
+  const messagePrefix = useMemo(() => getMcpMessagePrefix(currentProvider), [currentProvider]);
 
   // Get provider-specific cache keys
   const cacheKeys = useMemo(() => getCacheKeys(isCodexMode ? 'codex' : 'claude'), [isCodexMode]);
@@ -51,6 +103,8 @@ export function McpSettingsSection({ currentProvider = 'claude' }: McpSettingsSe
   // Dialog state
   const [showServerDialog, setShowServerDialog] = useState(false);
   const [showPresetDialog, setShowPresetDialog] = useState(false);
+  const [showMarketplaceDialog, setShowMarketplaceDialog] = useState(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
   const [showHelpDialog, setShowHelpDialog] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [showLogDialog, setShowLogDialog] = useState(false);
@@ -143,6 +197,7 @@ export function McpSettingsSection({ currentProvider = 'claude' }: McpSettingsSe
 
   // Use tools list update hook
   useToolsUpdate({
+    isCodexMode,
     cacheKeys,
     setServerTools,
     onLog: addLog,
@@ -215,8 +270,25 @@ export function McpSettingsSection({ currentProvider = 'claude' }: McpSettingsSe
   // Add server from marketplace
   const handleAddFromMarket = useCallback(() => {
     setShowDropdown(false);
-    addToast(t('mcp.marketComingSoon'), 'info');
-  }, [t, addToast]);
+    setShowMarketplaceDialog(true);
+  }, []);
+
+  // Import servers from a GitHub Copilot configuration
+  const handleImportFromCopilot = useCallback(() => {
+    setShowDropdown(false);
+    setShowImportDialog(true);
+  }, []);
+
+  // Persist imported servers via the same save path as handleSaveServer
+  const handleImportServers = useCallback((importedServers: McpServer[]) => {
+    importedServers.forEach((server) => {
+      sendToJava(`add_${messagePrefix}mcp_server`, server);
+    });
+    addToast(`${t('mcp.added')} ${importedServers.length}`, 'success');
+    setTimeout(() => {
+      loadServers();
+    }, 100);
+  }, [messagePrefix, addToast, t, loadServers]);
 
   // Save server
   const handleSaveServer = useCallback((server: McpServer) => {
@@ -365,6 +437,10 @@ export function McpSettingsSection({ currentProvider = 'claude' }: McpSettingsSe
                   <span className="codicon codicon-extensions"></span>
                   {t('mcp.addFromMarket')}
                 </div>
+                <div className="dropdown-item" onClick={handleImportFromCopilot}>
+                  <span className="codicon codicon-github"></span>
+                  {t('mcp.import.menuLabel')}
+                </div>
               </div>
             )}
           </div>
@@ -438,6 +514,24 @@ export function McpSettingsSection({ currentProvider = 'claude' }: McpSettingsSe
         <McpPresetDialog
           onClose={() => setShowPresetDialog(false)}
           onSelect={handleSelectPreset}
+        />
+      )}
+
+      {showMarketplaceDialog && (
+        <McpMarketplaceDialog
+          currentProvider={currentProvider}
+          existingIds={servers.map(s => s.id)}
+          onClose={() => setShowMarketplaceDialog(false)}
+          onSelect={handleSaveServer}
+        />
+      )}
+
+      {showImportDialog && (
+        <McpImportDialog
+          currentProvider={currentProvider}
+          existingIds={servers.map(s => s.id)}
+          onClose={() => setShowImportDialog(false)}
+          onImport={handleImportServers}
         />
       )}
 

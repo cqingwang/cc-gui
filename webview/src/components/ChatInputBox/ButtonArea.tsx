@@ -1,11 +1,14 @@
-import { useCallback, useMemo, useState, useEffect } from 'react';
+import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ButtonAreaProps, CodexFastMode, ModelInfo, PermissionMode, ReasoningEffort } from './types';
 import { CodexFastModeSelect, ConfigSelect, ModelSelect, ModeSelect, ProviderSelect, ReasoningSelect } from './selectors';
-import { CLAUDE_MODELS, CODEX_MODELS } from './types';
+import { CLAUDE_MODELS, CODEX_MODELS, GROK_MODELS } from './types';
+import { buildCodexModelList } from './codexModelList';
 import { STORAGE_KEYS, validateCodexCustomModels } from '../../types/provider';
 import type { CodexCustomModel } from '../../types/provider';
 import { readClaudeModelMapping } from '../../utils/claudeModelMapping';
+import { useCliModels } from '../../hooks/providers/useCliModels';
+import { useToolbarSelectorCompact } from './hooks/useToolbarSelectorCompact';
 
 /**
  * Get custom Codex model list from localStorage
@@ -71,8 +74,8 @@ export const ButtonArea = ({
   hasInputContent = false,
   isLoading = false,
   isEnhancing = false,
-  selectedModel = 'claude-sonnet-4-6',
-  permissionMode = 'bypassPermissions',
+  selectedModel = 'claude-sonnet-4-7',
+  permissionMode = 'default',
   currentProvider = 'claude',
   reasoningEffort = 'high',
   codexFastMode = 'normal',
@@ -97,6 +100,7 @@ export const ButtonArea = ({
 }: ButtonAreaProps) => {
   const { t } = useTranslation();
   // const fileInputRef = useRef<HTMLInputElement>(null);
+  const { cliModels, cliModelsLoading, cliModelsError, cliDefaultModel, cliCatalogHasEntries, refreshCliModels } = useCliModels(currentProvider);
 
   // Track changes to custom models in localStorage
   // When localStorage changes, updating this version number triggers useMemo recalculation
@@ -132,9 +136,11 @@ export const ButtonArea = ({
    */
   const applyModelMapping = useCallback((model: ModelInfo, mapping: { main?: string; haiku?: string; sonnet?: string; opus?: string }): ModelInfo => {
     const modelKeyMap: Record<string, keyof typeof mapping> = {
+      'claude-sonnet-5': 'sonnet',
+      'claude-sonnet-4-7': 'sonnet',
       'claude-sonnet-4-6': 'sonnet',
+      'claude-opus-5': 'opus',
       'claude-opus-4-8': 'opus',
-      'claude-opus-4-7': 'opus',
       'claude-haiku-4-5': 'haiku',
     };
 
@@ -155,16 +161,20 @@ export const ButtonArea = ({
   // customModelsVersion triggers recalculation when localStorage changes
   const availableModels = useMemo(() => {
     if (currentProvider === 'codex') {
-      // Merge built-in models and custom models
       const customModels = getCustomCodexModels();
-      if (customModels.length === 0) {
-        return CODEX_MODELS;
-      }
-      // Custom models first, built-in models after
-      // Filter out built-in models that duplicate custom models
-      const customIds = new Set(customModels.map(m => m.id));
-      const filteredBuiltIn = CODEX_MODELS.filter(m => !customIds.has(m.id));
-      return [...customModels, ...filteredBuiltIn];
+      // Real catalog entries only (config default / model_catalog_json). When
+      // empty, cliModels is the static CODEX_MODELS fallback from useCliModels —
+      // pass [] so built-ins are applied once via the third argument, not twice.
+      const catalogModels = cliCatalogHasEntries ? cliModels : [];
+      // customs → catalog → built-ins (deduped). Keeps plugin customs and the
+      // full built-in lineup even when a custom provider only returns its default.
+      return buildCodexModelList(catalogModels, customModels, CODEX_MODELS);
+    }
+    if (currentProvider === 'grok') {
+      return GROK_MODELS;
+    }
+    if (currentProvider === 'kimi' || currentProvider === 'opencode' || currentProvider === 'pi') {
+      return cliModels;
     }
     if (typeof window === 'undefined' || !window.localStorage) {
       return CLAUDE_MODELS;
@@ -190,7 +200,34 @@ export const ButtonArea = ({
     const customIds = new Set(customModels.map(m => m.id));
     const filteredBuiltIn = builtInModels.filter(m => !customIds.has(m.id));
     return [...customModels, ...filteredBuiltIn];
-  }, [currentProvider, applyModelMapping, customModelsVersion]);
+  }, [currentProvider, applyModelMapping, customModelsVersion, cliModels, cliCatalogHasEntries]);
+
+  // When a dynamic model catalog arrives, ensure selection is a real entry.
+  useEffect(() => {
+    const isDynamicProvider = currentProvider === 'kimi' || currentProvider === 'opencode'
+      || currentProvider === 'pi' || currentProvider === 'codex';
+    if (!isDynamicProvider) return;
+    // Only correct once a *real* catalog arrived. Static fallback lists
+    // (OPENCODE_MODELS = just "opencode-default", CODEX built-ins, …) must not
+    // clobber the user's choice — especially when ChatScreen remounts after
+    // leaving history and briefly shows the fallback before the cache/fetch
+    // lands.
+    if (!cliCatalogHasEntries) return;
+    if (cliModelsLoading) return;
+    if (!availableModels.length || !onModelSelect) return;
+    const exists = availableModels.some((model) => model.id === selectedModel);
+    if (!exists) {
+      onModelSelect(cliDefaultModel ?? availableModels[0].id);
+    }
+  }, [
+    availableModels,
+    currentProvider,
+    onModelSelect,
+    selectedModel,
+    cliDefaultModel,
+    cliCatalogHasEntries,
+    cliModelsLoading,
+  ]);
 
   /**
    * Handle submit button click
@@ -251,10 +288,34 @@ export const ButtonArea = ({
     onEnhancePrompt?.();
   }, [onEnhancePrompt]);
 
+  // Collapse selector labels for every CLI when left cluster is about to hit the send cluster (20px).
+  const buttonAreaRef = useRef<HTMLDivElement>(null);
+  const buttonAreaLeftRef = useRef<HTMLDivElement>(null);
+  const buttonAreaRightRef = useRef<HTMLDivElement>(null);
+  const selectorContentKey = [
+    currentProvider,
+    selectedModel,
+    permissionMode,
+    reasoningEffort,
+    codexFastMode,
+    selectedAgent?.id ?? '',
+    cliModelsLoading ? 'loading' : 'ready',
+  ].join('|');
+  const selectorsCompact = useToolbarSelectorCompact(
+    buttonAreaRef,
+    buttonAreaLeftRef,
+    buttonAreaRightRef,
+    selectorContentKey,
+  );
+
   return (
-    <div className="button-area" data-provider={currentProvider}>
+    <div
+      ref={buttonAreaRef}
+      className={`button-area${selectorsCompact ? ' button-area--compact' : ''}`}
+      data-provider={currentProvider}
+    >
       {/* Left side: selectors */}
-      <div className="button-area-left">
+      <div ref={buttonAreaLeftRef} className="button-area-left">
         <ConfigSelect
           alwaysThinkingEnabled={alwaysThinkingEnabled}
           onToggleThinking={onToggleThinking}
@@ -271,7 +332,18 @@ export const ButtonArea = ({
           compact
         />
         <ModeSelect value={permissionMode} onChange={handleModeSelect} provider={currentProvider} />
-        <ModelSelect value={selectedModel} onChange={handleModelSelect} models={availableModels} currentProvider={currentProvider} onAddModel={onAddModel} longContextEnabled={longContextEnabled} onLongContextChange={onLongContextChange} />
+        <ModelSelect
+          value={selectedModel}
+          onChange={handleModelSelect}
+          models={availableModels}
+          currentProvider={currentProvider}
+          loading={cliModelsLoading}
+          error={cliModelsError}
+          onRetry={() => refreshCliModels(currentProvider)}
+          onAddModel={onAddModel}
+          longContextEnabled={longContextEnabled}
+          onLongContextChange={onLongContextChange}
+        />
         <ReasoningSelect value={reasoningEffort} onChange={handleReasoningChange} selectedModel={selectedModel} currentProvider={currentProvider} />
         {currentProvider === 'codex' && (
           <CodexFastModeSelect value={codexFastMode} onChange={handleCodexFastModeChange} />
@@ -279,7 +351,7 @@ export const ButtonArea = ({
       </div>
 
       {/* Right side: tool buttons */}
-      <div className="button-area-right">
+      <div ref={buttonAreaRightRef} className="button-area-right">
         <div className="button-divider" />
 
         {/* Enhance prompt button */}

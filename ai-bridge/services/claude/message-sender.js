@@ -86,6 +86,10 @@ function buildQueryOptions({ workingDirectory, permissionMode, sdkModelName, max
     canUseTool,
     hooks: { PreToolUse: [{ hooks: [preToolUseHook] }] },
     settingSources: ['user', 'project', 'local'],
+    // bypassPermissions requires this flag per SDK contract (sdk.d.ts: "Must be set to
+    // true when using permissionMode: 'bypassPermissions'"). Without it a future SDK
+    // version could silently drop bypass and change permission behavior.
+    ...(permissionMode === 'bypassPermissions' && { allowDangerouslySkipPermissions: true }),
     ...(mcpServers && { mcpServers }),
     ...(claudeCliOverride && { pathToClaudeCodeExecutable: claudeCliOverride }),
     systemPrompt: {
@@ -151,6 +155,18 @@ function processStreamMessage(msg, state, logPrefix) {
   if (state.streamingEnabled && !state.streamStarted) {
     process.stdout.write('[STREAM_START]\n');
     state.streamStarted = true;
+  }
+
+  // Subagent (sidechain) messages carry a non-null parent_tool_use_id pointing
+  // at the main turn's Agent/Task tool_use. Their detailed thinking and tool
+  // calls belong to the sidechain transcript, which the frontend loads
+  // separately via onSubagentHistoryLoaded - so never emit them into the main
+  // session stream, otherwise the subagent's internals pollute the main chat.
+  // Mirrors the parent_tool_use_id gate in persistent-query-service.js, which is
+  // the active path in daemon mode; this branch covers the non-daemon CLI path
+  // (channel-manager.js) and tests, keeping both stream routes consistent.
+  if (msg?.parent_tool_use_id) {
+    return;
   }
 
   // Handle stream_event type (streaming deltas from SDK)

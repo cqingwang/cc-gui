@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { ModelSelect } from './ModelSelect';
 import { CLAUDE_MODELS, CODEX_MODELS } from '../types';
@@ -59,38 +59,115 @@ describe('ModelSelect', () => {
   it('没有具体映射时应回退到全局 main 映射', () => {
     localStorage.setItem(
       STORAGE_KEYS.CLAUDE_MODEL_MAPPING,
-      JSON.stringify({ main: 'glm-4.7' }),
+      JSON.stringify({ main: 'glm-4.7', fable: 'glm-5.2' }),
     );
 
     render(
       <ModelSelect
-        value={sonnetModel.id}
+        value="claude-fable-5"
         onChange={vi.fn()}
-        models={[sonnetModel]}
+        models={[
+          sonnetModel,
+          { id: 'claude-fable-5', label: 'Fable 5', description: 'Fable 5 · Most powerful · Mythos-class' },
+        ]}
         currentProvider="claude"
       />,
     );
 
-    expect(screen.getByRole('button').textContent).toContain('glm-4.7');
+    expect(screen.getByRole('button').textContent).toContain('glm-5.2');
   });
 
-  it('Claude 内置模型列表应移除已下线的 Opus 4.6，且不使用 [1m] 后缀 ID', () => {
+  it('Claude 内置模型列表应按目标顺序展示最新模型，并移除旧可见项', () => {
+    expect(CLAUDE_MODELS.map((model) => model.id)).toEqual([
+      'claude-fable-5',
+      'claude-opus-5',
+      'claude-opus-4-8',
+      'claude-sonnet-5',
+      'claude-sonnet-4-7',
+      'claude-haiku-4-5',
+    ]);
     const ids = CLAUDE_MODELS.map((model) => model.id);
+    expect(ids).not.toContain('claude-opus-4-7');
     expect(ids).not.toContain('claude-opus-4-6');
+    expect(ids).not.toContain('claude-sonnet-4-6');
     expect(ids.some((id) => id.endsWith('[1m]'))).toBe(false);
   });
 
   it('Codex 内置模型列表应与目标设计一致', () => {
     expect(CODEX_MODELS.map((model) => model.id)).toEqual([
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
       'gpt-5.5',
       'gpt-5.4',
-      'gpt-5.2-codex',
-      'gpt-5.1-codex-max',
-      'gpt-5.4-mini',
-      'gpt-5.3-codex',
-      'gpt-5.3-codex-spark',
-      'gpt-5.2',
-      'gpt-5.1-codex-mini',
     ]);
+  });
+
+  it('loading 时应显示加载状态', () => {
+    render(
+      <ModelSelect
+        value="opencode-default"
+        onChange={vi.fn()}
+        models={[
+          {
+            id: 'opencode-default',
+            label: 'OpenCode Default',
+            description: 'Use OpenCode CLI default model',
+          },
+        ]}
+        currentProvider="opencode"
+        loading
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByTestId('model-loading')).toBeTruthy();
+    expect(screen.getByText('chat.loadingDropdown')).toBeTruthy();
+  });
+
+  it('error 时应显示失败状态并支持点击重试', () => {
+    const onRetry = vi.fn();
+    render(
+      <ModelSelect
+        value="auto"
+        onChange={vi.fn()}
+        models={[
+          {
+            id: 'auto',
+            label: 'PI Auto',
+            description: 'Use PI CLI default model',
+          },
+        ]}
+        currentProvider="pi"
+        error="pi --list-models failed"
+        onRetry={onRetry}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button'));
+    const errorRow = screen.getByTestId('model-load-error');
+    expect(errorRow).toBeTruthy();
+    expect(screen.getByText('chat.modelsLoadFailed')).toBeTruthy();
+
+    fireEvent.click(errorRow);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('loading 时不应同时显示 error 状态', () => {
+    render(
+      <ModelSelect
+        value="auto"
+        onChange={vi.fn()}
+        models={[{ id: 'auto', label: 'PI Auto' }]}
+        currentProvider="pi"
+        loading
+        error="timeout"
+        onRetry={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByTestId('model-loading')).toBeTruthy();
+    expect(screen.queryByTestId('model-load-error')).toBeNull();
   });
 });

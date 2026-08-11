@@ -5,10 +5,29 @@
 
 import { existsSync, createReadStream, mkdirSync, readFileSync, appendFileSync, statSync } from 'fs';
 import { readFile } from 'fs/promises';
-import { join } from 'path';
+import { dirname } from 'path';
 import { randomUUID } from 'crypto';
 import { createInterface } from 'readline';
-import { getClaudeDir } from '../../utils/path-utils.js';
+import { getClaudeProjectSessionFilePath } from '../../utils/path-utils.js';
+
+/**
+ * Write a JSON payload as a single stdout line and await the flush.
+ *
+ * `console.log` is fire-and-forget: for a piped stdout the underlying
+ * `process.stdout.write` is asynchronous, and a large payload (the full
+ * session history returned by getSession easily exceeds the libuv
+ * high-water mark) gets queued in an internal buffer. Once the handler
+ * returns, channel-manager.js sets `process.exitCode` and lets the process
+ * exit naturally -- which can race ahead of the buffer draining and
+ * truncate the JSON mid-stream, surfacing as `MalformedJsonException` on
+ * the Java side. Awaiting the write callback guarantees the bytes reach
+ * the OS pipe before the process is allowed to exit.
+ */
+function writeJsonResponse(payload) {
+  return new Promise((resolve) => {
+    process.stdout.write(JSON.stringify(payload) + '\n', 'utf8', resolve);
+  });
+}
 
 /**
  * Append a message to the JSONL history file.
@@ -16,11 +35,9 @@ import { getClaudeDir } from '../../utils/path-utils.js';
  */
 export function persistJsonlMessage(sessionId, cwd, obj) {
   try {
-    const projectsDir = join(getClaudeDir(), 'projects');
-    const sanitizedCwd = (cwd || process.cwd()).replace(/[^a-zA-Z0-9]/g, '-');
-    const projectHistoryDir = join(projectsDir, sanitizedCwd);
+    const sessionFile = getClaudeProjectSessionFilePath(sessionId, cwd);
+    const projectHistoryDir = dirname(sessionFile);
     mkdirSync(projectHistoryDir, { recursive: true });
-    const sessionFile = join(projectHistoryDir, `${sessionId}.jsonl`);
 
     // Add necessary metadata fields to ensure compatibility with ClaudeHistoryReader
     const enrichedObj = {
@@ -43,9 +60,7 @@ export function persistJsonlMessage(sessionId, cwd, obj) {
  */
 export function loadSessionHistory(sessionId, cwd) {
   try {
-    const projectsDir = join(getClaudeDir(), 'projects');
-    const sanitizedCwd = (cwd || process.cwd()).replace(/[^a-zA-Z0-9]/g, '-');
-    const sessionFile = join(projectsDir, sanitizedCwd, `${sessionId}.jsonl`);
+    const sessionFile = getClaudeProjectSessionFilePath(sessionId, cwd);
 
     if (!existsSync(sessionFile)) {
       return [];
@@ -95,10 +110,10 @@ export async function getSessionMessages(sessionId, cwd = null) {
     const sessionFile = resolveSessionFile(sessionId, cwd);
 
     if (!existsSync(sessionFile)) {
-      console.log(JSON.stringify({
+      await writeJsonResponse({
         success: true,
         messages: []
-      }));
+      });
       return;
     }
 
@@ -116,17 +131,17 @@ export async function getSessionMessages(sessionId, cwd = null) {
       })
       .filter(msg => msg !== null);
 
-    console.log(JSON.stringify({
+    await writeJsonResponse({
       success: true,
       messages
-    }));
+    });
 
   } catch (error) {
     console.error('[GET_SESSION_ERROR]', error.message);
-    console.log(JSON.stringify({
+    await writeJsonResponse({
       success: false,
       error: error.message
-    }));
+    });
   }
 }
 
@@ -135,10 +150,10 @@ export async function getLatestUserMessage(sessionId, cwd = null) {
     const sessionFile = resolveSessionFile(sessionId, cwd);
 
     if (!existsSync(sessionFile)) {
-      console.log(JSON.stringify({
+      await writeJsonResponse({
         success: true,
         message: null
-      }));
+      });
       return;
     }
 
@@ -168,16 +183,16 @@ export async function getLatestUserMessage(sessionId, cwd = null) {
       }
     }
 
-    console.log(JSON.stringify({
+    await writeJsonResponse({
       success: true,
       message: latestUserMessage
-    }));
+    });
   } catch (error) {
     console.error('[GET_LATEST_USER_ERROR]', error.message);
-    console.log(JSON.stringify({
+    await writeJsonResponse({
       success: false,
       error: error.message
-    }));
+    });
   }
 }
 
@@ -214,8 +229,5 @@ function resolveSessionFile(sessionId, cwd = null) {
   if (!sessionId || /[\/\\]/.test(sessionId)) {
     throw new Error('Invalid session ID');
   }
-  const projectsDir = join(getClaudeDir(), 'projects');
-  const sanitizedCwd = (cwd || process.cwd()).replace(/[^a-zA-Z0-9]/g, '-');
-  const projectHistoryDir = join(projectsDir, sanitizedCwd);
-  return join(projectHistoryDir, `${sessionId}.jsonl`);
+  return getClaudeProjectSessionFilePath(sessionId, cwd);
 }

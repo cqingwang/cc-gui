@@ -15,6 +15,12 @@ import {
   SKIP_NEW_SESSION_CONFIRM_EVENT,
   type SkipNewSessionConfirmChangedDetail,
 } from '../../../utils/skipNewSessionConfirm';
+import {
+  DETAILED_OUTPUT_ENABLED_EVENT,
+  getDetailedOutputEnabled,
+  setDetailedOutputEnabled,
+  type DetailedOutputEnabledChangedDetail,
+} from '../../../utils/detailedOutputPreference';
 
 const sendToJava = (message: string) => {
   if (window.sendToJava) {
@@ -80,6 +86,10 @@ export interface UseSettingsBasicActionsReturn {
   aiTitleGenerationEnabled: boolean;
   statusBarWidgetEnabled: boolean;
   taskCompletionNotificationEnabled: boolean;
+  askUserQuestionNotificationEnabled: boolean;
+  detailedOutputEnabled: boolean;
+  systemNotificationOnlyWhenUnfocused: boolean;
+  askUserQuestionSoundNotificationEnabled: boolean;
   commitAiConfig: CommitAiConfig;
   promptEnhancerConfig: PromptEnhancerConfig;
 
@@ -112,6 +122,10 @@ export interface UseSettingsBasicActionsReturn {
   handleAiTitleGenerationEnabledChange: (enabled: boolean) => void;
   handleStatusBarWidgetEnabledChange: (enabled: boolean) => void;
   handleTaskCompletionNotificationEnabledChange: (enabled: boolean) => void;
+  handleAskUserQuestionNotificationEnabledChange: (enabled: boolean) => void;
+  handleDetailedOutputEnabledChange: (enabled: boolean) => void;
+  handleSystemNotificationOnlyWhenUnfocusedChange: (enabled: boolean) => void;
+  handleAskUserQuestionSoundNotificationEnabledChange: (enabled: boolean) => void;
   permissionDialogTimeoutSeconds: number;
   handlePermissionDialogTimeoutChange: (seconds: number) => void;
   handleCommitAiProviderChange: (provider: CommitAiProvider) => void;
@@ -163,6 +177,9 @@ export interface UseSettingsBasicActionsReturn {
   /** @internal */ setAiTitleGenerationEnabled: (enabled: boolean) => void;
   /** @internal */ setStatusBarWidgetEnabled: (enabled: boolean) => void;
   /** @internal */ setTaskCompletionNotificationEnabled: (enabled: boolean) => void;
+  /** @internal */ setAskUserQuestionNotificationEnabled: (enabled: boolean) => void;
+  /** @internal */ setSystemNotificationOnlyWhenUnfocused: (enabled: boolean) => void;
+  /** @internal */ setAskUserQuestionSoundNotificationEnabled: (enabled: boolean) => void;
   /** @internal */ setCommitAiConfig: (config: CommitAiConfig) => void;
   /** @internal */ setPromptEnhancerConfig: (config: PromptEnhancerConfig) => void;
 }
@@ -276,6 +293,27 @@ export function useSettingsBasicActions({
 
   // Task completion notification toggle (default: false, opt-in feature)
   const [taskCompletionNotificationEnabled, setTaskCompletionNotificationEnabled] = useState<boolean>(false);
+
+  // AskUserQuestion reminder notification toggle (default: false, opt-in feature)
+  const [askUserQuestionNotificationEnabled, setAskUserQuestionNotificationEnabled] = useState<boolean>(false);
+  const [systemNotificationOnlyWhenUnfocused, setSystemNotificationOnlyWhenUnfocused] = useState<boolean>(false);
+  const [askUserQuestionSoundNotificationEnabled, setAskUserQuestionSoundNotificationEnabled] = useState<boolean>(false);
+
+  // Detailed message footer output (localStorage-only, default: false to preserve original footer style)
+  const [detailedOutputEnabled, setDetailedOutputEnabledState] = useState<boolean>(() =>
+    getDetailedOutputEnabled()
+  );
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<DetailedOutputEnabledChangedDetail>;
+      if (custom.detail && typeof custom.detail.enabled === 'boolean') {
+        setDetailedOutputEnabledState(custom.detail.enabled);
+      }
+    };
+    window.addEventListener(DETAILED_OUTPUT_ENABLED_EVENT, handler);
+    return () => window.removeEventListener(DETAILED_OUTPUT_ENABLED_EVENT, handler);
+  }, []);
 
   // Permission dialog timeout — owned by App.tsx; we treat the prop as authoritative.
   // We intentionally do NOT keep a local copy: it would be dead state because the
@@ -484,6 +522,30 @@ export function useSettingsBasicActions({
     setTaskCompletionNotificationEnabled(enabled);
     const payload = { taskCompletionNotificationEnabled: enabled };
     sendToJava(`set_task_completion_notification_enabled:${JSON.stringify(payload)}`);
+  }, []);
+
+  // AskUserQuestion reminder notification toggle change handler
+  const handleAskUserQuestionNotificationEnabledChange = useCallback((enabled: boolean) => {
+    setAskUserQuestionNotificationEnabled(enabled);
+    const payload = { askUserQuestionNotificationEnabled: enabled };
+    sendToJava(`set_ask_user_question_notification_enabled:${JSON.stringify(payload)}`);
+  }, []);
+
+  const handleDetailedOutputEnabledChange = useCallback((enabled: boolean) => {
+    setDetailedOutputEnabledState(enabled);
+    setDetailedOutputEnabled(enabled);
+  }, []);
+
+  const handleSystemNotificationOnlyWhenUnfocusedChange = useCallback((enabled: boolean) => {
+    setSystemNotificationOnlyWhenUnfocused(enabled);
+    const payload = { systemNotificationOnlyWhenUnfocused: enabled };
+    sendToJava(`set_system_notification_only_when_unfocused:${JSON.stringify(payload)}`);
+  }, []);
+
+  const handleAskUserQuestionSoundNotificationEnabledChange = useCallback((enabled: boolean) => {
+    setAskUserQuestionSoundNotificationEnabled(enabled);
+    const payload = { askUserQuestionSoundNotificationEnabled: enabled };
+    sendToJava(`set_ask_user_question_sound_notification_enabled:${JSON.stringify(payload)}`);
   }, []);
 
   // Permission dialog timeout change handler
@@ -697,6 +759,17 @@ export function useSettingsBasicActions({
     taskCompletionNotificationEnabled,
     setTaskCompletionNotificationEnabled,
     handleTaskCompletionNotificationEnabledChange,
+    askUserQuestionNotificationEnabled,
+    setAskUserQuestionNotificationEnabled,
+    handleAskUserQuestionNotificationEnabledChange,
+    detailedOutputEnabled,
+    handleDetailedOutputEnabledChange,
+    systemNotificationOnlyWhenUnfocused,
+    setSystemNotificationOnlyWhenUnfocused,
+    handleSystemNotificationOnlyWhenUnfocusedChange,
+    askUserQuestionSoundNotificationEnabled,
+    setAskUserQuestionSoundNotificationEnabled,
+    handleAskUserQuestionSoundNotificationEnabledChange,
     permissionDialogTimeoutSeconds,
     handlePermissionDialogTimeoutChange,
     commitAiConfig,

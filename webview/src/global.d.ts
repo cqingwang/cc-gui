@@ -7,6 +7,16 @@ interface Window {
    */
   sendToJava?: (message: string) => void;
 
+  /** Legacy windowed-JCEF repaint requested after its IntelliJ content tab is activated. */
+  onTabActivated?: () => void;
+
+  /** Strict two-frame OSR damage pulse, owned by a Java frame-fence attempt token. */
+  __ccguiSurfaceDamagePhaseA?: (token: string) => boolean;
+  __ccguiSurfaceDamagePhaseB?: (token: string) => boolean;
+  __ccguiSurfaceDamageReplace?: (previousToken: string, nextToken: string) => boolean;
+  __ccguiSurfaceDamageFinish?: (token: string) => boolean;
+  __ccguiSurfaceDamageCancel?: (token: string, predecessorToken?: string) => boolean;
+
   /**
    * Get clipboard file path from Java
    */
@@ -21,6 +31,12 @@ interface Window {
    * Update messages from backend
    */
   updateMessages?: (json: string, sequence?: string | number) => void;
+  /** Replace a long conversation's tail without resending its unchanged prefix. */
+  updateMessageTail?: (
+    json: string,
+    baseIndex: string | number,
+    sequence?: string | number,
+  ) => void;
 
   /**
    * Patch a single message UUID without re-sending the full message list.
@@ -58,9 +74,11 @@ interface Window {
   onExportSessionData?: (json: string) => void;
 
   /**
-   * Clear all messages
+   * Clear all messages. The optional barrier sequence (the backend coalescer's
+   * post-reset updateSequence) advances __minAcceptedUpdateSequence so stale
+   * in-flight updateMessages from the previous session are rejected.
    */
-  clearMessages?: () => void;
+  clearMessages?: (barrierSequence?: string | number) => void;
 
   /**
    * Add error message
@@ -81,17 +99,57 @@ interface Window {
    * Add single history message (used for Codex session loading)
    */
   addHistoryMessage?: (message: any) => void;
+  onSubagentHistoryChunk?: (transferId: string, chunk: string, isFinal: string | boolean) => void;
+  beginCodexHistoryPage?: (json: string) => void;
+  appendCodexHistoryPageBatch?: (pageId: string, json: string) => void;
+  appendCodexHistoryPageChunk?: (
+    pageId: string,
+    chunk: string,
+    transferId: string,
+    isFinal: string | boolean,
+  ) => void;
+  completeCodexHistoryPage?: (json: string) => void;
+  codexHistoryPageError?: (json: string) => void;
+  codexHistoryPageRenderComplete?: () => void;
+  __codexHistoryPageInfo?: {
+    pageId: string;
+    sessionId: string;
+    mode: 'replace' | 'prepend';
+    fromTurn: number;
+    toTurn: number;
+    totalTurns: number;
+    hasMore: boolean;
+    loadedMessageCount: number;
+    cursorReset?: boolean;
+  };
 
   /**
    * History load complete callback - invoked when history messages finish loading.
    * Triggers Markdown re-rendering to fix incorrect rendering on first history load.
    */
-  historyLoadComplete?: () => void;
+  historyLoadComplete?: (expectedMessageCount?: string | number) => void;
+  /** Early history completion buffered before React installs the real callback. */
+  __pendingHistoryLoadComplete?: { expectedMessageCount?: string | number };
+  /** Number of messages in the latest full backend snapshot accepted by this page. */
+  __lastAcceptedMessageCount?: number;
+  /** Restored-history snapshot size that still needs a React commit acknowledgment. */
+  __pendingHistoryRefreshMessageCount?: number;
+  /** Identifies or invalidates a commit-bound repaint when the page changes sessions first. */
+  __historySurfaceRefreshEpoch?: number;
 
   /**
    * Subagent sidechain history callback.
    */
   onSubagentHistoryLoaded?: (json: string) => void;
+
+  /**
+   * task_* SDK system event callback (async subagent lifecycle).
+   * Payload: { subtype: 'task_started'|'task_progress'|'task_notification',
+   *   task_id, tool_use_id, status?, summary?, usage?, output_file? }.
+   * task_notification carries the terminal status and result summary that the
+   * StatusPanel uses to mark a background (run_in_background) Agent subagent as completed.
+   */
+  onTaskEvent?: (eventJson: string) => void;
 
   /**
    * SDK-to-CLI session conversion result callback.
@@ -132,6 +190,9 @@ interface Window {
    */
   onUsageUpdate?: (json: string) => void;
 
+  /** Buffers the latest usage update received before React callbacks mount. */
+  __pendingUsageUpdate?: string;
+
   /**
    * Mode changed callback
    */
@@ -163,11 +224,45 @@ interface Window {
    * Show AskUserQuestion dialog
    */
   showAskUserQuestionDialog?: (json: string) => void;
+  updateCodexPets?: (json: string) => void;
+  updateCodexPetPreview?: (json: string) => void;
+  onCodexPetAssetsChanged?: () => void;
+  updateCodexPetConfig?: (json: string) => void;
+  updatePetdexCatalog?: (json: string) => void;
+  updatePetdexPreview?: (json: string) => void;
+  onCodexPetOperation?: (json: string) => void;
+  updateHatchPetStatus?: (json: string) => void;
+  updateHatchPetReference?: (json: string) => void;
+  onHatchPetCommandPrepared?: (json: string) => void;
 
   /**
    * Show PlanApproval dialog
    */
   showPlanApprovalDialog?: (json: string) => void;
+
+  /**
+   * Force-close the open AskUserQuestion dialog matching the given requestId.
+   * Sent by the Java backend when its safety-net timer fires and resolves the
+   * pending future with an empty answer — the WebView dialog (if still visible)
+   * must be torn down too, otherwise its open-refs stay set and every
+   * subsequent showAskUserQuestionDialog call is silently enqueued behind the
+   * orphaned dialog (issue #1360). When requestId is null/empty, every open
+   * dialog is closed.
+   */
+  forceCloseAskUserQuestionDialog?: (requestId?: string | null) => void;
+
+  /**
+   * Force-close the open permission dialog matching the given channelId, or
+   * every open dialog when channelId is null/empty. Same rationale as
+   * forceCloseAskUserQuestionDialog.
+   */
+  forceClosePermissionDialog?: (channelId?: string | null) => void;
+
+  /**
+   * Force-close the open plan approval dialog matching the given requestId, or
+   * every open dialog when requestId is null/empty.
+   */
+  forceClosePlanApprovalDialog?: (requestId?: string | null) => void;
 
   /**
    * Add selection info (file and line numbers) - auto-tracked, only updates ContextBar
@@ -200,6 +295,21 @@ interface Window {
   onFileListResult?: (json: string) => void;
 
   /**
+   * Update MCP marketplace sources.
+   */
+  updateMcpMarketplaceSources?: (json: string) => void;
+
+  /**
+   * Update MCP marketplace entries.
+   */
+  updateMcpMarketplaceEntries?: (json: string) => void;
+
+  /**
+   * Preview of MCP servers parsed from an external (e.g. GitHub Copilot) configuration.
+   */
+  updateCopilotImportPreview?: (json: string) => void;
+
+  /**
    * Update MCP servers list
    */
   updateMcpServers?: (json: string) => void;
@@ -213,6 +323,9 @@ interface Window {
    * Update MCP server tools list
    */
   updateMcpServerTools?: (json: string) => void;
+
+  /** Update Codex MCP server tools list. */
+  updateCodexMcpServerTools?: (json: string) => void;
 
   mcpServerToggled?: (json: string) => void;
 
@@ -314,6 +427,21 @@ interface Window {
   updateTaskCompletionNotificationEnabled?: (json: string) => void;
 
   /**
+   * Update AskUserQuestion reminder notification enabled state
+   */
+  updateAskUserQuestionNotificationEnabled?: (json: string) => void;
+
+  /**
+   * Update visual system notification focus gate state
+   */
+  updateSystemNotificationOnlyWhenUnfocused?: (json: string) => void;
+
+  /**
+   * Update AskUserQuestion reminder sound notification enabled state
+   */
+  updateAskUserQuestionSoundNotificationEnabled?: (json: string) => void;
+
+  /**
    * Update permission dialog timeout setting
    */
   updatePermissionDialogTimeout?: (json: string) => void;
@@ -389,14 +517,9 @@ interface Window {
   skillToggleResult?: (json: string) => void;
 
   /**
-   * Update usage statistics
+   * TokenTracker bridge response callback (correlated by requestId)
    */
-  updateUsageStatistics?: (json: string) => void;
-
-  /**
-   * Pending usage statistics before component mounts
-   */
-  __pendingUsageStatistics?: string;
+  onTokenTrackerResponse?: (json: string) => void;
 
   /**
    * Update slash commands list (from SDK)
@@ -751,6 +874,10 @@ interface Window {
   __pendingUpdateJson?: string | null;
   __pendingUpdateSequence?: number | null;
   __minAcceptedUpdateSequence?: number;
+  /** Number of paged history messages prepended ahead of the backend session snapshot. */
+  __prependedHistoryMessageCount?: number;
+  /** Backend index represented by the first non-prepended message; zero means its full prefix is present. */
+  __messageBaseIndex?: number;
   /** Cancel pending rAF-deferred updateMessages (set by messageCallbacks, called by onStreamEnd). */
   __cancelPendingUpdateMessages?: () => void;
 
@@ -788,6 +915,12 @@ interface Window {
    * Update dependency status callback
    */
   updateDependencyStatus?: (json: string) => void;
+
+  /**
+   * CLI tools install/version detection result (Settings → CLI tab).
+   * Payload is a map of tool id → { id, name, binaryName, installed, version?, path?, error? }.
+   */
+  updateCliStatus?: (json: string) => void;
 
   /**
    * Dependency install progress callback
@@ -843,6 +976,8 @@ interface Window {
    * Pending dependency status payload before React initialization
    */
   __pendingDependencyStatus?: string;
+  __dependencyStatusState?: 'pending' | 'ready' | 'error';
+  __ccgOnBridgeReady?: () => void;
 
   /**
    * Pending streaming enabled status before React initialization
@@ -920,6 +1055,42 @@ interface Window {
    */
   __INITIAL_IDE_THEME__?: 'light' | 'dark';
 
+  /**
+   * Per-tab provider id ("claude" / "codex") injected by Java into the HTML
+   * before React boots. Used by useModelStatePersistence to override the
+   * global localStorage snapshot ("model-selection-state") when the backend
+   * has already restored a provider for this tab. Empty / unset means no
+   * backend preference — fall back to localStorage. See issue #1353.
+   */
+  __INITIAL_TAB_PROVIDER__?: string;
+
+  /**
+   * Per-tab model id injected by Java, used the same way as
+   * __INITIAL_TAB_PROVIDER__. Empty / unset means no backend preference.
+   */
+  __INITIAL_TAB_MODEL__?: string;
+
+  /** Runtime page generation established by Java before exposing the bridge. */
+  __CCG_PAGE_GENERATION__?: number;
+
+  /** Identifies initial load, startup retry, or runtime recovery for this page. */
+  __CCGUI_PAGE_LOAD_KIND__?: 'initial_load' | 'startup_retry' | 'runtime_recovery';
+
+  /** True after Java has installed the runtime generation and load context. */
+  __CCGUI_PAGE_CONTEXT_READY__?: boolean;
+
+  /** True for a native watchdog reload that reuses the tab's original HTML. */
+  __CCGUI_RECOVERY_RELOAD__?: boolean;
+
+  /** True after React applies Java's authoritative recovery provider/model state. */
+  __CCGUI_RECOVERY_STATE_APPLIED__?: boolean;
+
+  /** Applies the current Java session configuration without echoing bridge commands. */
+  applyBackendTabState?: (json: string) => void;
+
+  /** Buffers backend tab state when Java responds before React callbacks mount. */
+  __pendingBackendTabState?: string;
+
   // ============================================================================
   // Provider settings panel callbacks (registered by ProviderList)
   // ============================================================================
@@ -937,9 +1108,39 @@ interface Window {
   import_preview_result?: (dataOrStr: string | { providers?: unknown }) => void;
 
   /**
+   * Codex cc-switch import preview result callback. Mirrors import_preview_result
+   * but is Codex-scoped so the Codex panel (mounted alongside the Claude panel)
+   * owns its own import channel without colliding with the Claude flow.
+   */
+  codex_import_preview_result?: (dataOrStr: string | { providers?: unknown }) => void;
+
+  /**
+   * Codex cc-switch import notification callback (type, title, message),
+   * used for success/error/info toasts during Codex import. Codex-scoped to
+   * avoid double toasts from the shared backend_notification channel.
+   */
+  codex_cc_switch_notification?: (...args: unknown[]) => void;
+
+  /**
    * Backend notification callback (variadic for backward compatibility).
    * Modern callers pass (type, title, message); legacy callers pass a single
    * JSON string or object with shape { type, title, message }.
    */
   backend_notification?: (...args: unknown[]) => void;
+
+  /**
+   * CLI provider model catalog (Kimi / OpenCode). Java pushes JSON after
+   * `get_cli_models:<provider>` via channel-manager `listModels`.
+   */
+  setCliModels?: (
+    dataOrStr:
+      | string
+      | {
+          success?: boolean;
+          provider?: string;
+          models?: Array<{ id?: string; label?: string; description?: string }>;
+          error?: string;
+          defaultModel?: string;
+        }
+  ) => void;
 }

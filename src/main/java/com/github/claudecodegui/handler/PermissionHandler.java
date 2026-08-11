@@ -6,8 +6,11 @@ import com.github.claudecodegui.handler.core.HandlerContext;
 import com.github.claudecodegui.permission.PermissionRequest;
 import com.github.claudecodegui.permission.PermissionService;
 import com.github.claudecodegui.settings.CodemossSettingsService;
+import com.github.claudecodegui.util.SoundNotificationService;
+import com.github.claudecodegui.util.SystemNotificationService;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
@@ -50,6 +53,14 @@ public class PermissionHandler extends BaseMessageHandler {
         CancellableTask schedule(Runnable task, long delaySeconds);
     }
 
+    interface AskUserQuestionVisualNotifier {
+        void remind();
+    }
+
+    interface AskUserQuestionSoundNotifier {
+        void play();
+    }
+
     private static final SafetyNetScheduler DEFAULT_SAFETY_NET_SCHEDULER = (task, delaySeconds) -> {
         ScheduledFuture<?> scheduledFuture = AppExecutorUtil.getAppScheduledExecutorService()
                 .schedule(task, delaySeconds, TimeUnit.SECONDS);
@@ -57,6 +68,8 @@ public class PermissionHandler extends BaseMessageHandler {
     };
 
     private final SafetyNetScheduler safetyNetScheduler;
+    private final AskUserQuestionVisualNotifier askUserQuestionVisualNotifier;
+    private final AskUserQuestionSoundNotifier askUserQuestionSoundNotifier;
 
     // Permission request map
     private final Map<String, CompletableFuture<Integer>> pendingPermissionRequests = new ConcurrentHashMap<>();
@@ -79,8 +92,20 @@ public class PermissionHandler extends BaseMessageHandler {
     }
 
     PermissionHandler(HandlerContext context, SafetyNetScheduler safetyNetScheduler) {
+        this(context, safetyNetScheduler,
+                () -> SystemNotificationService.getInstance()
+                        .showAskUserQuestionReminderToast(context.getProject()),
+                () -> SoundNotificationService.getInstance()
+                        .playAskUserQuestionReminderSound());
+    }
+
+    PermissionHandler(HandlerContext context, SafetyNetScheduler safetyNetScheduler,
+                      AskUserQuestionVisualNotifier askUserQuestionVisualNotifier,
+                      AskUserQuestionSoundNotifier askUserQuestionSoundNotifier) {
         super(context);
         this.safetyNetScheduler = safetyNetScheduler;
+        this.askUserQuestionVisualNotifier = askUserQuestionVisualNotifier;
+        this.askUserQuestionSoundNotifier = askUserQuestionSoundNotifier;
     }
 
     long getSafetyNetTimeoutSeconds() {
@@ -105,6 +130,30 @@ public class PermissionHandler extends BaseMessageHandler {
     void scheduleSafetyNet(CompletableFuture<?> future, Runnable timeoutTask) {
         CancellableTask cancellableTask = safetyNetScheduler.schedule(timeoutTask, getSafetyNetTimeoutSeconds());
         future.whenComplete((ignored, error) -> cancellableTask.cancel());
+    }
+
+    /**
+     * Push a force-close signal to the webview's dialog manager. Used after the
+     * Java side has auto-resolved a permission/ask/plan dialog future (e.g.
+     * safety-net timeout) so the React dialog state cannot stay stuck on a
+     * resolved request and silently block every subsequent show*Dialog call.
+     *
+     * @param fnName       webview function: forceClosePermissionDialog /
+     *                     forceCloseAskUserQuestionDialog /
+     *                     forceClosePlanApprovalDialog
+     * @param targetId     channelId (permission) or requestId (ask/plan);
+     *                     null clears every open dialog of that kind.
+     */
+    private void forceCloseFrontendDialog(String fnName, String targetId) {
+        String safeId = targetId == null ? "" : targetId;
+        String escapedId = escapeJs(safeId);
+        String jsCode = "if (typeof window." + fnName + " === 'function') { "
+                + "window." + fnName + "('" + escapedId + "'); }";
+        // executeJavaScriptOnEDT already marshals to the EDT and no-ops when the
+        // browser is absent, so call it directly. Wrapping it in another
+        // invokeLater would both double-post and NPE in unit tests, where
+        // ApplicationManager.getApplication() is null.
+        context.executeJavaScriptOnEDT(jsCode);
     }
 
     public void setPermissionDeniedCallback(PermissionDeniedCallback callback) {
@@ -178,6 +227,12 @@ public class PermissionHandler extends BaseMessageHandler {
                 if (future.complete(PermissionService.PermissionResponse.DENY.getValue())) {
                     LOG.warn("[PERM_SHOW] Safety-net timeout fired (webview unreachable) for channelId=" + channelId);
                     pendingPermissionRequests.remove(channelId);
+                    // The webview may still have the dialog open (with its own
+                    // longer countdown finishing later, or stuck in an invisible
+                    // state from a JCEF render issue). Tell it to drop the
+                    // current dialog so the queue can drain for the next
+                    // request — see issue #1360.
+                    forceCloseFrontendDialog("forceClosePermissionDialog", channelId);
                 }
             });
 
@@ -353,6 +408,19 @@ public class PermissionHandler extends BaseMessageHandler {
         }
         pendingPlanApprovalRequests.clear();
 
+        // Match the Java-side teardown by closing any dialogs still open in the
+        // webview. Pass null/empty to close every dialog of each kind — same
+        // semantics as forceClose*Dialog called from the safety net.
+        if (permissionCount > 0) {
+            forceCloseFrontendDialog("forceClosePermissionDialog", null);
+        }
+        if (askUserCount > 0) {
+            forceCloseFrontendDialog("forceCloseAskUserQuestionDialog", null);
+        }
+        if (planCount > 0) {
+            forceCloseFrontendDialog("forceClosePlanApprovalDialog", null);
+        }
+
         LOG.info("[PERM_CLEAR] Cleared: " + permissionCount + " permission, " +
                  askUserCount + " askUser, " + planCount + " plan requests");
     }
@@ -372,29 +440,45 @@ public class PermissionHandler extends BaseMessageHandler {
 
         pendingAskUserQuestionRequests.put(requestId, future);
 
+        // Remind the user (via the opt-in system toast and sound) that Claude is waiting for an
+        // answer. Triggered here — before the JS dialog render — so the toast fires
+        // for every AskUserQuestion regardless of whether the webview is reachable.
+        try {
+            askUserQuestionVisualNotifier.remind();
+            askUserQuestionSoundNotifier.play();
+        } catch (Exception e) {
+            LOG.warn("[ASK_USER_QUESTION][SHOW_DIALOG] Failed to show reminder notification: " + e.getMessage());
+        }
+
         try {
             Gson gson = new Gson();
             String requestJson = gson.toJson(questionsData);
             String escapedJson = escapeJs(requestJson);
 
-            ApplicationManager.getApplication().invokeLater(() -> {
-                String jsCode = "(function retryShowAskUserQuestion(retries) { " +
-                    "  if (window.showAskUserQuestionDialog) { " +
-                    "    window.showAskUserQuestionDialog('" + escapedJson + "'); " +
-                    "  } else if (retries > 0) { " +
-                    "    setTimeout(function() { retryShowAskUserQuestion(retries - 1); }, 200); " +
-                    "  } else { " +
-                    "    console.error('[ASK_USER_QUESTION][JS] FAILED: showAskUserQuestionDialog not available!'); " +
-                    "  } " +
-                    "})(30);";
+            Application application = ApplicationManager.getApplication();
+            if (application != null) {
+                application.invokeLater(() -> {
+                    String jsCode = "(function retryShowAskUserQuestion(retries) { " +
+                        "  if (window.showAskUserQuestionDialog) { " +
+                        "    window.showAskUserQuestionDialog('" + escapedJson + "'); " +
+                        "  } else if (retries > 0) { " +
+                        "    setTimeout(function() { retryShowAskUserQuestion(retries - 1); }, 200); " +
+                        "  } else { " +
+                        "    console.error('[ASK_USER_QUESTION][JS] FAILED: showAskUserQuestionDialog not available!'); " +
+                        "  } " +
+                        "})(30);";
 
-                context.executeJavaScriptOnEDT(jsCode);
-            });
+                    context.executeJavaScriptOnEDT(jsCode);
+                });
+            } else {
+                LOG.debug("[ASK_USER_QUESTION][SHOW_DIALOG] Application unavailable, skipping JS dialog dispatch");
+            }
 
             scheduleSafetyNet(future, () -> {
                 if (future.complete(new JsonObject())) {
                     LOG.warn("[ASK_USER_QUESTION][SHOW_DIALOG] Safety-net timeout fired (webview unreachable) for requestId=" + requestId);
                     pendingAskUserQuestionRequests.remove(requestId);
+                    forceCloseFrontendDialog("forceCloseAskUserQuestionDialog", requestId);
                 }
             });
 
@@ -473,6 +557,7 @@ public class PermissionHandler extends BaseMessageHandler {
                 if (future.complete(timeoutResponse)) {
                     LOG.warn("[PLAN_APPROVAL][SHOW_DIALOG] Safety-net timeout fired (webview unreachable) for requestId=" + requestId);
                     pendingPlanApprovalRequests.remove(requestId);
+                    forceCloseFrontendDialog("forceClosePlanApprovalDialog", requestId);
                 }
             });
 

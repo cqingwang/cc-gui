@@ -6,8 +6,14 @@
 // Read/file viewing tools
 export const READ_TOOL_NAMES = new Set(['read', 'read_file', 'read_multiple_files']);
 
-// Edit/file modification tools
-export const EDIT_TOOL_NAMES = new Set(['edit', 'edit_file', 'replace_string', 'write_to_file']);
+// Edit/file modification tools (message-list grouping / EditToolBlock)
+export const EDIT_TOOL_NAMES = new Set([
+  'edit',
+  'edit_file',
+  'replace_string',
+  'write_to_file',
+  'multiedit',
+]);
 
 // Bash/command execution tools
 export const BASH_TOOL_NAMES = new Set(['bash', 'run_terminal_cmd', 'exec_command', 'execute_command', 'shell_command']);
@@ -31,7 +37,7 @@ export const TRANSIENT_INTERNAL_TOOL_NAMES = new Set([
   'multi_tool_use.parallel',
 ]);
 
-// File modification tools (for rewind feature - includes write for new file creation)
+// File modification tools (StatusPanel Edits tab / rewind — includes write + MultiEdit)
 export const FILE_MODIFY_TOOL_NAMES = new Set([
   'write',
   'write_file',
@@ -41,6 +47,7 @@ export const FILE_MODIFY_TOOL_NAMES = new Set([
   'write_to_file',
   'notebookedit',
   'create_file',
+  'multiedit',
 ]);
 
 export function normalizeToolName(toolName: string): string {
@@ -60,4 +67,28 @@ export function isTransientInternalToolName(toolName: string | undefined): boole
   if (!toolName) return false;
   const lower = toolName.toLowerCase();
   return TRANSIENT_INTERNAL_TOOL_NAMES.has(lower) || TRANSIENT_INTERNAL_TOOL_NAMES.has(normalizeToolName(lower));
+}
+
+/**
+ * Whether a content block is a tool_use that renders nothing in the message
+ * list (TodoWrite, TaskCreate, update_plan, and transient internal tools once
+ * streaming ends). Mirrors the null-return branches in ContentBlockRenderer so
+ * callers can filter such blocks before rendering - their arrival otherwise
+ * re-renders the message and shifts the streaming thinking block's last-block
+ * status, which flickered the thinking block. Pass the message's streaming
+ * flag so the transient-internal branch matches the renderer's behavior.
+ */
+export function isNonRenderedToolUse(
+  block: { type?: string; name?: string },
+  isStreaming: boolean,
+): boolean {
+  if (block.type !== 'tool_use') return false;
+  const toolName = normalizeToolName(block.name ?? '');
+  if (toolName === 'todowrite' || toolName === 'update_plan' || TASK_MANAGE_TOOL_NAMES.has(toolName)) {
+    return true;
+  }
+  if (!isStreaming && isTransientInternalToolName(block.name)) {
+    return true;
+  }
+  return false;
 }

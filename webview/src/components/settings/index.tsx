@@ -18,6 +18,7 @@ import PromptSection from './PromptSection';
 import CommitSection from './CommitSection';
 import PromptEnhancerSection from './PromptEnhancerSection';
 import OtherSettingsSection from './OtherSettingsSection';
+import PetSettingsSection from './PetSettingsSection';
 import { SkillsSettingsSection } from '../skills';
 import SettingsDialogs from './SettingsDialogs';
 import { setNewSessionConfirmEnabled as persistNewSessionConfirmEnabled } from '../../utils/skipNewSessionConfirm';
@@ -71,10 +72,11 @@ const SettingsView = ({
 }: SettingsViewProps) => {
   const { t } = useTranslation();
   const isCodexMode = currentProvider === 'codex';
-  // Codex mode: align with Claude capabilities for settings tabs
+  // Codex mode: align with Claude capabilities for settings tabs.
+  // The Codex pet entry is temporarily disabled (grayed out, not clickable).
   const disabledTabs = useMemo<SettingsTab[]>(
-    () => [],
-    [isCodexMode]
+    () => ['pet'],
+    []
   );
 
   // Page state: tabs, toasts, sidebar collapse, alert dialog
@@ -102,6 +104,8 @@ const SettingsView = ({
     setChatBgColor,
     userMsgColor,
     setUserMsgColor,
+    chatBarColor,
+    setChatBarColor,
     diffTheme,
     setDiffTheme,
   } = useSettingsThemeSync();
@@ -195,6 +199,17 @@ const SettingsView = ({
     taskCompletionNotificationEnabled,
     setTaskCompletionNotificationEnabled,
     handleTaskCompletionNotificationEnabledChange,
+    askUserQuestionNotificationEnabled,
+    setAskUserQuestionNotificationEnabled,
+    handleAskUserQuestionNotificationEnabledChange,
+    detailedOutputEnabled,
+    handleDetailedOutputEnabledChange,
+    systemNotificationOnlyWhenUnfocused,
+    setSystemNotificationOnlyWhenUnfocused,
+    handleSystemNotificationOnlyWhenUnfocusedChange,
+    askUserQuestionSoundNotificationEnabled,
+    setAskUserQuestionSoundNotificationEnabled,
+    handleAskUserQuestionSoundNotificationEnabledChange,
     permissionDialogTimeoutSeconds,
     handlePermissionDialogTimeoutChange,
     commitAiConfig,
@@ -349,6 +364,9 @@ const SettingsView = ({
     setAiTitleGenerationEnabled,
     setStatusBarWidgetEnabled,
     setTaskCompletionNotificationEnabled,
+    setAskUserQuestionNotificationEnabled,
+    setSystemNotificationOnlyWhenUnfocused,
+    setAskUserQuestionSoundNotificationEnabled,
   });
 
   // Save provider (wrapper function with validation logic)
@@ -448,7 +466,12 @@ const SettingsView = ({
           isCollapsed={isCollapsed}
           onToggleCollapse={toggleManualCollapse}
           disabledTabs={disabledTabs}
-          onDisabledTabClick={() => addToast(t('settings.codexFeatureUnavailable'), 'warning')}
+          onDisabledTabClick={(tab) =>
+            addToast(
+              t(tab === 'pet' ? 'settings.pet.temporarilyUnavailable' : 'settings.codexFeatureUnavailable'),
+              'warning'
+            )
+          }
         />
 
         {/* Content area */}
@@ -493,6 +516,8 @@ const SettingsView = ({
               onChatBgColorChange={setChatBgColor}
               userMsgColor={userMsgColor}
               onUserMsgColorChange={setUserMsgColor}
+              chatBarColor={chatBarColor}
+              onChatBarColorChange={setChatBarColor}
               diffTheme={diffTheme}
               onDiffThemeChange={setDiffTheme}
               diffExpandedByDefault={diffExpandedByDefault}
@@ -530,6 +555,14 @@ const SettingsView = ({
               onBrowseSound={handleBrowseSound}
               taskCompletionNotificationEnabled={taskCompletionNotificationEnabled}
               onTaskCompletionNotificationEnabledChange={handleTaskCompletionNotificationEnabledChange}
+              askUserQuestionNotificationEnabled={askUserQuestionNotificationEnabled}
+              onAskUserQuestionNotificationEnabledChange={handleAskUserQuestionNotificationEnabledChange}
+              detailedOutputEnabled={detailedOutputEnabled}
+              onDetailedOutputEnabledChange={handleDetailedOutputEnabledChange}
+              systemNotificationOnlyWhenUnfocused={systemNotificationOnlyWhenUnfocused}
+              onSystemNotificationOnlyWhenUnfocusedChange={handleSystemNotificationOnlyWhenUnfocusedChange}
+              askUserQuestionSoundNotificationEnabled={askUserQuestionSoundNotificationEnabled}
+              onAskUserQuestionSoundNotificationEnabledChange={handleAskUserQuestionSoundNotificationEnabledChange}
               permissionDialogTimeoutSeconds={permissionDialogTimeoutSeconds}
               onPermissionDialogTimeoutChange={handlePermissionDialogTimeoutChange}
             />
@@ -561,9 +594,9 @@ const SettingsView = ({
             <DependencySection addToast={addToast} isActive={currentTab === 'dependencies'} />
           </div>
 
-          {/* Usage statistics */}
+          {/* Usage statistics (vendored TokenTracker dashboard) */}
           <div style={currentTab === 'usage' ? BLOCK_STYLE : NONE_STYLE}>
-            <UsageSection currentProvider={currentProvider} />
+            <UsageSection />
           </div>
 
           {/* MCP servers */}
@@ -627,6 +660,7 @@ const SettingsView = ({
           {/* Prompts */}
           <div style={currentTab === 'prompts' ? BLOCK_STYLE : NONE_STYLE}>
             <PromptSection
+              currentProvider={currentProvider}
               onSuccess={(msg) => addToast(msg, 'success')}
             />
           </div>
@@ -634,6 +668,10 @@ const SettingsView = ({
           {/* Skills */}
           <div style={currentTab === 'skills' ? BLOCK_STYLE : NONE_STYLE}>
             <SkillsSettingsSection currentProvider={currentProvider} />
+          </div>
+
+          <div style={currentTab === 'pet' ? BLOCK_STYLE : NONE_STYLE}>
+            {currentTab === 'pet' && <PetSettingsSection addToast={addToast} />}
           </div>
 
           {/* Other settings */}

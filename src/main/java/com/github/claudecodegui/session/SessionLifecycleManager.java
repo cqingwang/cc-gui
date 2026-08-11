@@ -4,14 +4,13 @@ import com.github.claudecodegui.bridge.NodeDetector;
 import com.github.claudecodegui.i18n.ClaudeCodeGuiBundle;
 import com.github.claudecodegui.model.SessionTemplate;
 import com.github.claudecodegui.settings.CodemossSettingsService;
+import com.github.claudecodegui.handler.UsagePushService;
 import com.github.claudecodegui.handler.core.HandlerContext;
-import com.github.claudecodegui.handler.SettingsHandler;
 import com.github.claudecodegui.provider.claude.ClaudeSDKBridge;
 import com.github.claudecodegui.provider.codex.CodexSDKBridge;
+import com.github.claudecodegui.provider.common.MarkerCliBridge;
 import com.github.claudecodegui.skill.SlashCommandRegistry;
 import com.github.claudecodegui.util.JsUtils;
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
 import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
@@ -20,6 +19,7 @@ import com.intellij.ui.jcef.JBCefBrowser;
 
 import java.io.File;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -40,6 +40,8 @@ public class SessionLifecycleManager {
         ClaudeSDKBridge getClaudeSDKBridge();
 
         CodexSDKBridge getCodexSDKBridge();
+
+        Map<String, MarkerCliBridge> getCliBridges();
 
         ClaudeSession getSession();
 
@@ -89,8 +91,8 @@ public class SessionLifecycleManager {
                          + ", provider=" + previousProvider + ", model=" + previousModel);
 
         host.invalidateSessionCallbacks();
-        host.getStreamCoalescer().resetStreamState();
-        host.callJavaScript("clearMessages");
+        long clearBarrierSeq = host.getStreamCoalescer().resetStreamState();
+        host.callJavaScript("clearMessages", String.valueOf(clearBarrierSeq));
 
         CompletableFuture<Void> interruptFuture = oldSession != null
                                                           ? oldSession.interrupt()
@@ -137,8 +139,8 @@ public class SessionLifecycleManager {
         ClaudeSession oldSession = host.getSession();
 
         host.invalidateSessionCallbacks();
-        host.getStreamCoalescer().resetStreamState();
-        host.callJavaScript("clearMessages");
+        long clearBarrierSeq = host.getStreamCoalescer().resetStreamState();
+        host.callJavaScript("clearMessages", String.valueOf(clearBarrierSeq));
 
         CompletableFuture<Void> interruptFuture = oldSession != null
                 ? oldSession.interrupt()
@@ -195,13 +197,22 @@ public class SessionLifecycleManager {
      * Load a history session by ID.
      */
     public void loadHistorySession(String sessionId, String projectPath) {
-        loadHistorySession(sessionId, projectPath, null);
+        loadHistorySession(sessionId, projectPath, null, null);
     }
 
     /**
      * Load a history session by ID and provider.
      */
     public void loadHistorySession(String sessionId, String projectPath, String provider) {
+        loadHistorySession(sessionId, projectPath, provider, null);
+    }
+
+    /**
+     * Load a history session by ID, provider, and optional model from the history row.
+     *
+     * @param model when non-blank, restores that model instead of keeping the previous UI selection
+     */
+    public void loadHistorySession(String sessionId, String projectPath, String provider, String model) {
         LOG.info("Loading history session: " + sessionId + " from project: " + projectPath);
 
         ClaudeSession oldSession = host.getSession();
@@ -222,12 +233,14 @@ public class SessionLifecycleManager {
             previousProvider = defaultSession.getProvider();
             previousModel = defaultSession.getModel();
         }
+        String modelToRestore = (model != null && !model.trim().isEmpty()) ? model.trim() : previousModel;
         LOG.info("Preserving session state when loading history: mode=" + previousPermissionMode
-                         + ", provider=" + previousProvider + ", model=" + previousModel);
+                         + ", provider=" + previousProvider + ", model=" + modelToRestore
+                         + (model != null && !model.trim().isEmpty() ? " (from history)" : " (previous)"));
 
         host.invalidateSessionCallbacks();
-        host.getStreamCoalescer().resetStreamState();
-        host.callJavaScript("clearMessages");
+        long clearBarrierSeq = host.getStreamCoalescer().resetStreamState();
+        host.callJavaScript("clearMessages", String.valueOf(clearBarrierSeq));
         host.clearPendingPermissionRequests();
         host.clearPermissionDecisionMemory();
 
@@ -243,12 +256,15 @@ public class SessionLifecycleManager {
             }
 
             ClaudeSession newSession = new ClaudeSession(
-                    host.getProject(), host.getClaudeSDKBridge(), host.getCodexSDKBridge());
+                    host.getProject(),
+                    host.getClaudeSDKBridge(),
+                    host.getCodexSDKBridge(),
+                    host.getCliBridges());
             newSession.setPermissionMode(previousPermissionMode);
             newSession.setProvider(provider != null && !provider.trim().isEmpty() ? provider : previousProvider);
-            newSession.setModel(previousModel);
+            newSession.setModel(modelToRestore);
             LOG.info("Restored session state to loaded session: mode=" + previousPermissionMode
-                             + ", provider=" + newSession.getProvider() + ", model=" + previousModel);
+                             + ", provider=" + newSession.getProvider() + ", model=" + modelToRestore);
 
             host.setSession(newSession);
             host.getHandlerContext().setSession(newSession);
@@ -297,24 +313,16 @@ public class SessionLifecycleManager {
 
         try {
             CodemossSettingsService settingsService = new CodemossSettingsService();
-            String customWorkingDir = settingsService.getCustomWorkingDirectory(projectPath);
-
-            if (customWorkingDir != null && !customWorkingDir.isEmpty()) {
-                File workingDirFile = new File(customWorkingDir);
-                if (!workingDirFile.isAbsolute()) {
-                    workingDirFile = new File(projectPath, customWorkingDir);
-                }
-                if (workingDirFile.exists() && workingDirFile.isDirectory()) {
-                    String resolvedPath = workingDirFile.getAbsolutePath();
-                    LOG.info("Using custom working directory: " + resolvedPath);
-                    return resolvedPath;
-                } else {
-                    LOG.warn("Custom working directory does not exist: "
-                                     + workingDirFile.getAbsolutePath() + ", falling back to project root");
-                }
+            // Normalized effective working directory (custom dir if valid, else the
+            // project path). Collapsing relative segments here keeps the launched cwd
+            // consistent with the directory history is read from.
+            String resolvedPath = settingsService.getEffectiveWorkingDirectory(projectPath);
+            if (resolvedPath != null && !resolvedPath.isEmpty()) {
+                LOG.info("Using working directory: " + resolvedPath);
+                return resolvedPath;
             }
         } catch (Exception e) {
-            LOG.warn("Failed to read custom working directory: " + e.getMessage());
+            LOG.warn("Failed to resolve working directory: " + e.getMessage());
         }
 
         return projectPath;
@@ -378,7 +386,7 @@ public class SessionLifecycleManager {
      */
     public void sendCurrentPermissionMode() {
         try {
-            String currentMode = "bypassPermissions";
+            String currentMode = "default";
 
             ClaudeSession currentSession = host.getSession();
             if (currentSession != null) {
@@ -401,31 +409,11 @@ public class SessionLifecycleManager {
     }
 
     /**
-     * Reset token usage statistics in the frontend (used after new session creation).
+     * Clear transient context usage after creating a new session. The new provider has
+     * not reported a trusted token count yet, so used/max values remain unknown.
      */
     private void resetTokenUsage() {
-        int maxTokens = SettingsHandler.getModelContextLimit(host.getHandlerContext().getCurrentModel());
-        JsonObject usageUpdate = new JsonObject();
-        usageUpdate.addProperty("percentage", 0);
-        usageUpdate.addProperty("totalTokens", 0);
-        usageUpdate.addProperty("limit", maxTokens);
-        usageUpdate.addProperty("usedTokens", 0);
-        usageUpdate.addProperty("maxTokens", maxTokens);
-
-        String usageJson = new Gson().toJson(usageUpdate);
-
-        JBCefBrowser browser = host.getBrowser();
-        if (browser != null && !host.isDisposed()) {
-            String js = "(function() {" +
-                                "  if (typeof window.onUsageUpdate === 'function') {" +
-                                "    window.onUsageUpdate('" + JsUtils.escapeJs(usageJson) + "');" +
-                                "    console.log('[Backend->Frontend] Usage reset for new session');" +
-                                "  } else {" +
-                                "    console.warn('[Backend->Frontend] window.onUsageUpdate not found');" +
-                                "  }" +
-                                "})();";
-            browser.getCefBrowser().executeJavaScript(js, browser.getCefBrowser().getURL(), 0);
-        }
+        new UsagePushService(host.getHandlerContext()).clearUsageDisplay();
     }
 
     private String getCurrentEditorFilePath() {
@@ -433,7 +421,11 @@ public class SessionLifecycleManager {
     }
 
     private ClaudeSession createDefaultSession() {
-        return new ClaudeSession(host.getProject(), host.getClaudeSDKBridge(), host.getCodexSDKBridge());
+        return new ClaudeSession(
+                host.getProject(),
+                host.getClaudeSDKBridge(),
+                host.getCodexSDKBridge(),
+                host.getCliBridges());
     }
 
     private void completeNewSessionBootstrap(ClaudeSession newSession, String workingDirectory, String successLogPrefix) {

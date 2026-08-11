@@ -44,7 +44,7 @@ export function rewriteToolInputPaths(toolName, input) {
     // Verify the resolved path is still within the project root
     const resolvedRoot = resolve(projectRoot);
     if (!sanitized.startsWith(resolvedRoot + sep) && sanitized !== resolvedRoot) {
-      console.log(`[PERMISSION][PATH_REWRITE_BLOCKED] Rewritten path escaped project root: ${pathValue} → ${sanitized} (root: ${resolvedRoot})`);
+      console.error(`[PERMISSION][PATH_REWRITE_BLOCKED] Rewritten path escaped project root: ${pathValue} → ${sanitized} (root: ${resolvedRoot})`);
       return pathValue;
     }
 
@@ -74,7 +74,7 @@ export function rewriteToolInputPaths(toolName, input) {
   traverse(input);
 
   if (rewrites.length > 0) {
-    console.log(`[PERMISSION] Rewrote paths for ${toolName}:`, JSON.stringify(rewrites));
+    console.error(`[PERMISSION] Rewrote paths for ${toolName}:`, JSON.stringify(rewrites));
   }
 
   return { changed: rewrites.length > 0 };
@@ -202,7 +202,16 @@ export function isDangerousPath(filePath) {
     );
   }
 
-  const normalizedPath = isWindows ? filePath.toLowerCase() : filePath;
+  // Security (K): expand a leading ~ to the real home dir so shell-style references such as
+  // "cat ~/.ssh/id_rsa" inside a Bash command are matched, not only absolute paths.
+  let expandedPath = String(filePath);
+  if (userHomeDir) {
+    expandedPath = expandedPath.split('~/').join(`${userHomeDir}/`);
+    if (isWindows) {
+      expandedPath = expandedPath.split('~\\').join(`${userHomeDir}\\`);
+    }
+  }
+  const normalizedPath = isWindows ? expandedPath.toLowerCase() : expandedPath;
   for (const pattern of dangerousPatterns) {
     const normalizedPattern = isWindows ? pattern.toLowerCase() : pattern;
     if (normalizedPath.includes(normalizedPattern)) {
@@ -211,4 +220,28 @@ export function isDangerousPath(filePath) {
   }
 
   return false;
+}
+
+/**
+ * Collect all filesystem path-like strings from a tool input, including Bash command
+ * strings, so dangerous-path checks cover more than just file_path/path. (Security K)
+ * @param {string} toolName - tool name (reserved for future per-tool extraction)
+ * @param {Object} input - tool input object
+ * @returns {string[]} candidate path/command strings to screen with isDangerousPath
+ */
+export function collectToolInputPaths(toolName, input) {
+  const out = [];
+  if (!input || typeof input !== 'object') return out;
+  const push = (v) => { if (typeof v === 'string' && v) out.push(v); };
+  push(input.file_path);
+  push(input.path);
+  push(input.notebook_path);
+  if (Array.isArray(input.edits)) {
+    for (const edit of input.edits) {
+      if (edit && typeof edit === 'object') { push(edit.file_path); push(edit.path); }
+    }
+  }
+  // Bash / shell command strings carry their target paths inline.
+  push(input.command);
+  return out;
 }

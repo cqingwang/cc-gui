@@ -8,13 +8,16 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.ui.jcef.JBCefBrowser;
 
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
+
 /**
  * Handler context.
  * Provides all shared resources and callbacks needed by handlers.
  */
 public class HandlerContext {
 
-    public static final String DEFAULT_MODEL = "claude-sonnet-4-6";
+    public static final String DEFAULT_MODEL = "claude-sonnet-4-7";
     public static final String DEFAULT_PROVIDER = "claude";
 
     private final Project project;
@@ -22,6 +25,9 @@ public class HandlerContext {
     private final CodexSDKBridge codexSDKBridge;
     private final CodemossSettingsService settingsService;
     private final JsCallback jsCallback;
+    private final BooleanSupplier activeContentSupplier;
+    private final Supplier<String> contentTitleSupplier;
+    private volatile Runnable contentActivator = () -> { };
 
     // Mutable state accessed via getters/setters — volatile for thread safety
     private volatile ClaudeSession session;
@@ -45,11 +51,25 @@ public class HandlerContext {
             CodemossSettingsService settingsService,
             JsCallback jsCallback
     ) {
+        this(project, claudeSDKBridge, codexSDKBridge, settingsService, jsCallback, () -> true, () -> null);
+    }
+
+    public HandlerContext(
+            Project project,
+            ClaudeSDKBridge claudeSDKBridge,
+            CodexSDKBridge codexSDKBridge,
+            CodemossSettingsService settingsService,
+            JsCallback jsCallback,
+            BooleanSupplier activeContentSupplier,
+            Supplier<String> contentTitleSupplier
+    ) {
         this.project = project;
         this.claudeSDKBridge = claudeSDKBridge;
         this.codexSDKBridge = codexSDKBridge;
         this.settingsService = settingsService;
         this.jsCallback = jsCallback;
+        this.activeContentSupplier = activeContentSupplier == null ? () -> true : activeContentSupplier;
+        this.contentTitleSupplier = contentTitleSupplier == null ? () -> null : contentTitleSupplier;
     }
 
     // Getters
@@ -67,6 +87,22 @@ public class HandlerContext {
 
     public CodemossSettingsService getSettingsService() {
         return settingsService;
+    }
+
+    /**
+     * Resolve the normalized effective working directory for the current project —
+     * the custom working directory when configured and valid, otherwise the project
+     * base path. This is the directory Claude runs in and the key history is stored
+     * under, so history readers must use this instead of the raw base path.
+     *
+     * <p>Null-safe: returns the raw base path when no settings service is wired.
+     */
+    public String resolveEffectiveWorkingDirectory() {
+        String basePath = project != null ? project.getBasePath() : null;
+        if (settingsService == null) {
+            return basePath;
+        }
+        return settingsService.getEffectiveWorkingDirectory(basePath);
     }
 
     public ClaudeSession getSession() {
@@ -87,6 +123,28 @@ public class HandlerContext {
 
     public boolean isDisposed() {
         return disposed;
+    }
+
+    public boolean isActiveContent() {
+        try {
+            return activeContentSupplier.getAsBoolean();
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
+    public String getContentTitle() {
+        try {
+            return contentTitleSupplier.get();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    public void activateContent() {
+        if (!disposed) {
+            contentActivator.run();
+        }
     }
 
     // Setters
@@ -110,6 +168,10 @@ public class HandlerContext {
         this.disposed = disposed;
     }
 
+    public void setContentActivator(Runnable contentActivator) {
+        this.contentActivator = contentActivator == null ? () -> { } : contentActivator;
+    }
+
     // JavaScript callback proxy methods
     public void callJavaScript(String functionName, String... args) {
         jsCallback.callJavaScript(functionName, args);
@@ -123,12 +185,20 @@ public class HandlerContext {
      * Execute JavaScript on the EDT (Event Dispatch Thread).
      */
     public void executeJavaScriptOnEDT(String jsCode) {
-        if (browser != null && !disposed) {
-            ApplicationManager.getApplication().invokeLater(() -> {
-                if (browser != null && !disposed) {
-                    browser.getCefBrowser().executeJavaScript(jsCode, browser.getCefBrowser().getURL(), 0);
-                }
-            });
+        JBCefBrowser targetBrowser = this.browser;
+        if (targetBrowser == null || this.disposed) {
+            return;
         }
+        ApplicationManager.getApplication().invokeLater(() -> {
+            if (this.disposed || this.browser != targetBrowser) {
+                return;
+            }
+            try {
+                org.cef.browser.CefBrowser cefBrowser = targetBrowser.getCefBrowser();
+                cefBrowser.executeJavaScript(jsCode, cefBrowser.getURL(), 0);
+            } catch (Exception | LinkageError ignored) {
+                // The webview may be disposed between the generation check and execution.
+            }
+        });
     }
 }

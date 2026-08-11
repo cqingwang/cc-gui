@@ -1,21 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   REASONING_LEVELS,
   EFFORT_SUPPORTED_CLAUDE_MODELS,
   MAX_EFFORT_CLAUDE_MODELS,
   XHIGH_EFFORT_CLAUDE_MODELS,
+  codexModelSupportsMaxEffort,
   type ReasoningEffort,
 } from '../types';
+import { useDropdownPosition } from '../../../hooks/useDropdownPosition';
 
 const RELATIVE_INLINE_BLOCK_STYLE: React.CSSProperties = { position: 'relative', display: 'inline-block' };
 const CHEVRON_ICON_STYLE: React.CSSProperties = { fontSize: '10px', marginLeft: '2px' };
 const DROPDOWN_STYLE: React.CSSProperties = {
   position: 'absolute',
   bottom: '100%',
-  right: 0,
   marginBottom: '4px',
   zIndex: 10000,
+  maxWidth: 'calc(100vw - 16px)',
+  overflowX: 'hidden',
 };
 const LEVEL_INFO_STYLE: React.CSSProperties = { display: 'flex', flexDirection: 'column', flex: 1 };
 
@@ -31,9 +34,9 @@ interface ReasoningSelectProps {
  * ReasoningSelect - Reasoning Effort Selector
  * Controls the depth of reasoning for AI models.
  * Visibility and available levels depend on the selected model:
- * - Codex: low/medium/high/xhigh
- * - Claude Opus 4.7: low/medium/high/xhigh/max
- * - Claude Opus 4.6 and Sonnet 4.6: low/medium/high/max
+ * - Codex GPT-5.6: low/medium/high/xhigh/max; other Codex models: up to xhigh
+ * - Claude Opus 5 and Opus 4.8: low/medium/high/xhigh/max
+ * - Claude Sonnet 5, Sonnet 4.7, Opus 4.6, and Sonnet 4.6: low/medium/high/max
  * - Claude Haiku 4.5 and legacy models: hidden (no adaptive thinking support)
  */
 export const ReasoningSelect = ({ value, onChange, disabled, selectedModel, currentProvider }: ReasoningSelectProps) => {
@@ -41,12 +44,24 @@ export const ReasoningSelect = ({ value, onChange, disabled, selectedModel, curr
   const [isOpen, setIsOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { positionedStyle, recalculate } = useDropdownPosition({
+    buttonRef,
+    dropdownRef,
+    preferredAlignment: 'right',
+  });
 
   // Determine visibility: for Claude, hide if model doesn't support adaptive thinking
   const isVisible = currentProvider !== 'claude' || !selectedModel || EFFORT_SUPPORTED_CLAUDE_MODELS.has(selectedModel);
 
   // Build the list of available levels for the current model
   const availableLevels = REASONING_LEVELS.filter(level => {
+    // Grok CLI only accepts low|medium|high.
+    if (currentProvider === 'grok') {
+      return level.id === 'low' || level.id === 'medium' || level.id === 'high';
+    }
+    if (currentProvider === 'codex') {
+      return level.id !== 'max' || (selectedModel !== undefined && codexModelSupportsMaxEffort(selectedModel));
+    }
     if (currentProvider !== 'claude') {
       return level.id !== 'max';
     }
@@ -88,8 +103,12 @@ export const ReasoningSelect = ({ value, onChange, disabled, selectedModel, curr
   const handleToggle = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     if (disabled) return;
-    setIsOpen(!isOpen);
-  }, [isOpen, disabled]);
+    const nextOpen = !isOpen;
+    setIsOpen(nextOpen);
+    if (nextOpen) {
+      recalculate();
+    }
+  }, [isOpen, disabled, recalculate]);
 
   /**
    * Select reasoning level
@@ -126,6 +145,12 @@ export const ReasoningSelect = ({ value, onChange, disabled, selectedModel, curr
     };
   }, [isOpen]);
 
+  useLayoutEffect(() => {
+    if (isOpen) {
+      recalculate();
+    }
+  }, [isOpen, recalculate]);
+
   if (!isVisible) return null;
 
   return (
@@ -146,7 +171,7 @@ export const ReasoningSelect = ({ value, onChange, disabled, selectedModel, curr
         <div
           ref={dropdownRef}
           className="selector-dropdown"
-          style={DROPDOWN_STYLE}
+          style={{ ...DROPDOWN_STYLE, ...positionedStyle }}
         >
           {availableLevels.map((level) => (
             <div

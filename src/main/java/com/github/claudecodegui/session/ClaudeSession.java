@@ -4,6 +4,7 @@ import com.github.claudecodegui.permission.PermissionManager;
 import com.github.claudecodegui.permission.PermissionRequest;
 import com.github.claudecodegui.provider.claude.ClaudeSDKBridge;
 import com.github.claudecodegui.provider.codex.CodexSDKBridge;
+import com.github.claudecodegui.provider.common.MarkerCliBridge;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.intellij.openapi.diagnostic.Logger;
@@ -11,8 +12,10 @@ import com.intellij.openapi.project.Project;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 /**
  * Session management for Claude conversations.
@@ -29,6 +32,8 @@ public class ClaudeSession {
 
     private final Gson gson = new Gson();
     private final Project project;
+    /** Start time of the latest submitted turn, retained across Webview rebuilds. */
+    private volatile long lastTurnStartedAtMillis;
 
     // Session state manager
     private final com.github.claudecodegui.session.SessionState state;
@@ -129,9 +134,29 @@ public class ClaudeSession {
 
         default void onUserMessageUuidPatched(String content, String uuid) {
         }
+
+        /**
+         * Called when a Claude Code task_* SDK system event is received
+         * (task_started / task_progress / task_notification).
+         *
+         * <p>Async subagents (Agent/Task tool invoked with run_in_background:true) run
+         * in a background sidechain whose detailed
+         * messages never enter the main SDK stream. The main stream only carries these
+         * lightweight system events, which carry the agent's lifecycle signals: launch,
+         * per-tool progress, and terminal completion (with result + usage). Forwarding
+         * them to the frontend lets the subagent list reflect real running/completed
+         * state instead of being stuck on the launch summary.</p>
+         */
+        default void onTaskEvent(String eventJson) {
+        }
     }
 
-    public ClaudeSession(Project project, ClaudeSDKBridge claudeSDKBridge, CodexSDKBridge codexSDKBridge) {
+    public ClaudeSession(
+            Project project,
+            ClaudeSDKBridge claudeSDKBridge,
+            CodexSDKBridge codexSDKBridge,
+            Map<String, MarkerCliBridge> cliBridges
+    ) {
         this.project = project;
         this.claudeSDKBridge = claudeSDKBridge;
         this.codexSDKBridge = codexSDKBridge;
@@ -143,7 +168,7 @@ public class ClaudeSession {
         this.contextCollector = new com.github.claudecodegui.session.EditorContextCollector(project);
         this.callbackFacade = new SessionCallbackFacade(project);
         this.contextService = new SessionContextService(project, MAX_FILE_SIZE_BYTES);
-        this.providerRouter = new SessionProviderRouter(claudeSDKBridge, codexSDKBridge);
+        this.providerRouter = new SessionProviderRouter(claudeSDKBridge, codexSDKBridge, cliBridges);
         this.sendService = new SessionSendService(
                 project,
                 state,
@@ -153,6 +178,7 @@ public class ClaudeSession {
                 gson,
                 claudeSDKBridge,
                 codexSDKBridge,
+                cliBridges,
                 contextService
         );
         this.messageOrchestrator = new SessionMessageOrchestrator(
@@ -455,6 +481,7 @@ public class ClaudeSession {
             String requestedReasoningEffort,
             String requestedCodexFastMode
     ) {
+        lastTurnStartedAtMillis = System.currentTimeMillis();
         String normalizedInput = (input != null) ? input.trim() : "";
         Message userMessage = contextService.buildUserMessage(normalizedInput, attachments);
         sendService.updateSessionStateForSend(userMessage, normalizedInput);
@@ -498,13 +525,18 @@ public class ClaudeSession {
      * Interrupt the current execution.
      */
     public CompletableFuture<Void> interrupt() {
-        if (state.getChannelId() == null) {
+        String provider = state.getProvider();
+        String channelId = state.getChannelId();
+        if (channelId == null) {
             return CompletableFuture.completedFuture(null);
         }
 
         return CompletableFuture.runAsync(() -> {
             try {
-                providerRouter.interruptChannel(state.getProvider(), state.getChannelId());
+                providerRouter.interruptChannel(provider, channelId);
+                if (!isCurrentChannel(provider, channelId)) {
+                    return;
+                }
                 state.setError(null);  // Clear previous error state
                 state.setBusy(false);
                 state.setLoading(false);  // Also reset loading state
@@ -517,11 +549,19 @@ public class ClaudeSession {
 
                 callbackFacade.notifyStateChange(state.isBusy(), state.isLoading(), state.getError());
             } catch (Exception e) {
-                state.setError(e.getMessage());
-                state.setLoading(false);  // Also reset loading on error
-                callbackFacade.notifyStateChange(state.isBusy(), state.isLoading(), state.getError());
+                if (isCurrentChannel(provider, channelId)) {
+                    state.setError(e.getMessage());
+                    state.setLoading(false);  // Also reset loading on error
+                    callbackFacade.notifyStateChange(state.isBusy(), state.isLoading(), state.getError());
+                }
+                throw new CompletionException(e);
             }
         });
+    }
+
+    private boolean isCurrentChannel(String provider, String channelId) {
+        return Objects.equals(provider, state.getProvider())
+                && Objects.equals(channelId, state.getChannelId());
     }
 
     /**
@@ -616,6 +656,14 @@ public class ClaudeSession {
      */
     public String getModel() {
         return state.getModel();
+    }
+
+    /**
+     * Returns the start time of the latest submitted turn, or {@code 0} when
+     * no turn has been submitted yet.
+     */
+    public long getLastTurnStartedAtMillis() {
+        return lastTurnStartedAtMillis;
     }
 
     /**

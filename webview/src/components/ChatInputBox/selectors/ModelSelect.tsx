@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AVAILABLE_MODELS, normalizeClaudeModelId, modelSupports1MContext, strip1MContextSuffix } from '../types';
 import type { ModelInfo } from '../types';
 import { readClaudeModelMapping } from '../../../utils/claudeModelMapping';
 import { ProviderModelIcon } from '../../shared/ProviderModelIcon';
+import { useDropdownPosition } from '../../../hooks/useDropdownPosition';
 import Switch from 'antd/es/switch';
 
 const RELATIVE_INLINE_BLOCK_STYLE: React.CSSProperties = { position: 'relative', display: 'inline-block' };
@@ -11,23 +12,41 @@ const CHEVRON_ICON_STYLE: React.CSSProperties = { fontSize: '10px', marginLeft: 
 const DROPDOWN_STYLE: React.CSSProperties = {
   position: 'absolute',
   bottom: '100%',
-  left: 0,
   marginBottom: '4px',
   zIndex: 10000,
+  maxWidth: 'calc(100vw - 16px)',
+  overflowX: 'hidden',
 };
-const MODEL_OPTION_INFO_STYLE: React.CSSProperties = { display: 'flex', flexDirection: 'column', flex: 1 };
+const MODEL_OPTION_INFO_STYLE: React.CSSProperties = { display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, overflow: 'hidden' };
+const MODEL_TEXT_STYLE: React.CSSProperties = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
 const LONG_CONTEXT_OPTION_STYLE: React.CSSProperties = { justifyContent: 'space-between', cursor: 'default' };
 const LONG_CONTEXT_LABEL_STYLE: React.CSSProperties = { fontSize: '12px' };
+const MAX_VISIBLE_MODEL_OPTIONS = 100;
+/** Cap model dropdown height so long lists scroll instead of filling the panel. */
+const DROPDOWN_MAX_HEIGHT_PX = 300;
 
 interface ModelSelectProps {
   value: string;
   onChange: (modelId: string) => void;
   models?: ModelInfo[];
   currentProvider?: string;
+  /** True while CLI providers (OpenCode / Kimi) are still fetching model catalogs. */
+  loading?: boolean;
+  /** Set when the CLI model catalog fetch failed (or timed out); row offers retry. */
+  error?: string | null;
+  /** Retries the CLI model catalog fetch for the current provider. */
+  onRetry?: () => void;
   onAddModel?: () => void;
   longContextEnabled?: boolean;
   onLongContextChange?: (enabled: boolean) => void;
 }
+
+const LOADING_OPTION_STYLE: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  cursor: 'default',
+};
 
 const DEFAULT_MODEL_MAP: Record<string, ModelInfo> = AVAILABLE_MODELS.reduce(
   (acc, model) => {
@@ -38,41 +57,41 @@ const DEFAULT_MODEL_MAP: Record<string, ModelInfo> = AVAILABLE_MODELS.reduce(
 );
 
 const MODEL_LABEL_KEYS: Record<string, string> = {
+  'claude-opus-5': 'models.claude.opus5.label',
+  'claude-sonnet-5': 'models.claude.sonnet5.label',
+  'claude-sonnet-4-7': 'models.claude.sonnet47.label',
   'claude-sonnet-4-6': 'models.claude.sonnet46.label',
   'claude-fable-5': 'models.claude.fable5.label',
   'claude-opus-4-8': 'models.claude.opus48.label',
-  'claude-opus-4-7': 'models.claude.opus46.label',
   'claude-opus-4-6': 'models.claude.opus46_1m.label',
   'claude-opus-4-6[1m]': 'models.claude.opus46_1m.label',
   'claude-haiku-4-5': 'models.claude.haiku45.label',
+  'gpt-5.6-sol': 'models.codex.gpt56sol.label',
+  'gpt-5.6-terra': 'models.codex.gpt56terra.label',
+  'gpt-5.6-luna': 'models.codex.gpt56luna.label',
   'gpt-5.5': 'models.codex.gpt55.label',
   'gpt-5.4': 'models.codex.gpt54.label',
-  'gpt-5.2-codex': 'models.codex.gpt52codex.label',
-  'gpt-5.1-codex-max': 'models.codex.gpt51codexMax.label',
-  'gpt-5.4-mini': 'models.codex.gpt54mini.label',
-  'gpt-5.3-codex': 'models.codex.gpt53codex.label',
-  'gpt-5.3-codex-spark': 'models.codex.gpt53codexSpark.label',
-  'gpt-5.2': 'models.codex.gpt52.label',
-  'gpt-5.1-codex-mini': 'models.codex.gpt51codexMini.label',
+  'grok-4.5': 'models.grok.grok45.label',
+  grok: 'models.grok.grok45.label',
 };
 
 const MODEL_DESCRIPTION_KEYS: Record<string, string> = {
+  'claude-opus-5': 'models.claude.opus5.description',
+  'claude-sonnet-5': 'models.claude.sonnet5.description',
+  'claude-sonnet-4-7': 'models.claude.sonnet47.description',
   'claude-sonnet-4-6': 'models.claude.sonnet46.description',
   'claude-fable-5': 'models.claude.fable5.description',
   'claude-opus-4-8': 'models.claude.opus48.description',
-  'claude-opus-4-7': 'models.claude.opus46.description',
   'claude-opus-4-6': 'models.claude.opus46_1m.description',
   'claude-opus-4-6[1m]': 'models.claude.opus46_1m.description',
   'claude-haiku-4-5': 'models.claude.haiku45.description',
+  'gpt-5.6-sol': 'models.codex.gpt56sol.description',
+  'gpt-5.6-terra': 'models.codex.gpt56terra.description',
+  'gpt-5.6-luna': 'models.codex.gpt56luna.description',
   'gpt-5.5': 'models.codex.gpt55.description',
   'gpt-5.4': 'models.codex.gpt54.description',
-  'gpt-5.2-codex': 'models.codex.gpt52codex.description',
-  'gpt-5.1-codex-max': 'models.codex.gpt51codexMax.description',
-  'gpt-5.4-mini': 'models.codex.gpt54mini.description',
-  'gpt-5.3-codex': 'models.codex.gpt53codex.description',
-  'gpt-5.3-codex-spark': 'models.codex.gpt53codexSpark.description',
-  'gpt-5.2': 'models.codex.gpt52.description',
-  'gpt-5.1-codex-mini': 'models.codex.gpt51codexMini.description',
+  'grok-4.5': 'models.grok.grok45.description',
+  grok: 'models.grok.grok45.description',
 };
 
 /**
@@ -81,9 +100,12 @@ const MODEL_DESCRIPTION_KEYS: Record<string, string> = {
  * Legacy Opus 4.6 IDs share the same opus mapping bucket.
  */
 const MODEL_ID_TO_MAPPING_KEY: Record<string, string> = {
+  'claude-fable-5': 'fable',
+  'claude-opus-5': 'opus',
+  'claude-sonnet-5': 'sonnet',
+  'claude-sonnet-4-7': 'sonnet',
   'claude-sonnet-4-6': 'sonnet',
   'claude-opus-4-8': 'opus',
-  'claude-opus-4-7': 'opus',
   'claude-opus-4-6': 'opus',
   'claude-opus-4-6[1m]': 'opus',
   'claude-haiku-4-5': 'haiku',
@@ -128,16 +150,31 @@ const resolveModelIdForIcon = (
  * ModelSelect - Model selector component
  * Supports switching between Sonnet 4.5, Opus 4.5, and other models, including Codex models
  */
-export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, currentProvider = 'claude', onAddModel, longContextEnabled = true, onLongContextChange }: ModelSelectProps) => {
+export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, currentProvider = 'claude', loading = false, error = null, onRetry, onAddModel, longContextEnabled = true, onLongContextChange }: ModelSelectProps) => {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { positionedStyle, maxHeight, recalculate } = useDropdownPosition({
+    buttonRef,
+    dropdownRef,
+    preferredAlignment: 'right',
+  });
 
   // Strip [1m] suffix for finding the model in the list
   const strippedValue = strip1MContextSuffix(value);
   const normalizedValue = currentProvider === 'claude' ? normalizeClaudeModelId(strippedValue) : strippedValue;
-  const currentModel = models.find(m => m.id === normalizedValue) || models.find(m => m.id === strippedValue) || models[0];
+  // Prefer the user's selection even when the catalog is still loading / only a
+  // static fallback is available. Falling back to models[0] made OpenCode (and
+  // other dynamic providers) visually snap back to the first entry after leaving
+  // history and remounting ChatScreen.
+  const currentModel = models.find(m => m.id === normalizedValue)
+    || models.find(m => m.id === strippedValue)
+    || (strippedValue
+      ? { id: strippedValue, label: strippedValue } as ModelInfo
+      : models[0]);
   const modelMapping = readClaudeModelMapping();
 
   const isSelectedModel = (modelId: string): boolean => {
@@ -187,13 +224,32 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
     return model.description;
   };
 
+  const normalizedSearchQuery = deferredSearchQuery.trim().toLowerCase();
+  const filteredModels = normalizedSearchQuery
+    ? models.filter((model) => {
+        const label = getModelLabel(model, false);
+        const description = getModelDescription(model) ?? '';
+        return [model.id, label, description].some((value) => value.toLowerCase().includes(normalizedSearchQuery));
+      })
+    : models;
+  const visibleModels = filteredModels.slice(0, MAX_VISIBLE_MODEL_OPTIONS);
+  const hiddenModelCount = Math.max(0, filteredModels.length - visibleModels.length);
+  const showSearch = models.length > MAX_VISIBLE_MODEL_OPTIONS || searchQuery.length > 0;
+
   /**
    * Toggle dropdown
    */
   const handleToggle = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    setIsOpen(!isOpen);
-  }, [isOpen]);
+    const nextOpen = !isOpen;
+    setIsOpen(nextOpen);
+    if (!nextOpen) {
+      setSearchQuery('');
+    }
+    if (nextOpen) {
+      recalculate();
+    }
+  }, [isOpen, recalculate]);
 
   /**
    * Select model
@@ -201,6 +257,7 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
   const handleSelect = useCallback((modelId: string) => {
     onChange(modelId);
     setIsOpen(false);
+    setSearchQuery('');
   }, [onChange]);
 
   /**
@@ -217,6 +274,7 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
         !buttonRef.current.contains(e.target as Node)
       ) {
         setIsOpen(false);
+        setSearchQuery('');
       }
     };
 
@@ -230,6 +288,12 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [isOpen]);
+
+  useLayoutEffect(() => {
+    if (isOpen) {
+      recalculate();
+    }
+  }, [isOpen, filteredModels.length, loading, recalculate]);
 
   return (
     <div style={RELATIVE_INLINE_BLOCK_STYLE}>
@@ -253,9 +317,51 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
         <div
           ref={dropdownRef}
           className="selector-dropdown"
-          style={DROPDOWN_STYLE}
+          style={{
+            ...DROPDOWN_STYLE,
+            ...positionedStyle,
+            maxHeight: maxHeight
+              ? `${Math.min(DROPDOWN_MAX_HEIGHT_PX, maxHeight)}px`
+              : `${DROPDOWN_MAX_HEIGHT_PX}px`,
+            overflowY: 'auto',
+          }}
         >
-          {models.map((model) => (
+          {showSearch && (
+            <div className="selector-search-row">
+              <input
+                className="selector-search-input"
+                data-testid="model-search-input"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder={t('models.searchPlaceholder', { defaultValue: 'Search models' })}
+                autoFocus
+              />
+            </div>
+          )}
+          {loading && (
+            <div
+              className="selector-option selector-option-status"
+              data-testid="model-loading"
+              style={LOADING_OPTION_STYLE}
+            >
+              <span className="codicon codicon-loading codicon-modifier-spin" />
+              <span>{t('chat.loadingDropdown')}</span>
+            </div>
+          )}
+          {!loading && error && (
+            <div
+              className="selector-option selector-option-status"
+              data-testid="model-load-error"
+              style={{ ...LOADING_OPTION_STYLE, cursor: onRetry ? 'pointer' : 'default' }}
+              title={error}
+              onClick={() => onRetry?.()}
+            >
+              <span className="codicon codicon-warning" />
+              <span style={{ flex: 1, minWidth: 0 }}>{t('chat.modelsLoadFailed')}</span>
+              <span className="codicon codicon-refresh" />
+            </div>
+          )}
+          {visibleModels.map((model) => (
             <div
               key={model.id}
               className={`selector-option ${isSelectedModel(model.id) ? 'selected' : ''}`}
@@ -268,9 +374,9 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
                 colored
               />
               <div style={MODEL_OPTION_INFO_STYLE}>
-                <span>{getModelLabel(model, false)}</span>
+                <span style={MODEL_TEXT_STYLE}>{getModelLabel(model, false)}</span>
                 {getModelDescription(model) && (
-                  <span className="model-description">{getModelDescription(model)}</span>
+                  <span className="model-description" style={MODEL_TEXT_STYLE}>{getModelDescription(model)}</span>
                 )}
               </div>
               {isSelectedModel(model.id) && (
@@ -278,6 +384,19 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
               )}
             </div>
           ))}
+          {visibleModels.length === 0 && (
+            <div className="selector-option selector-option-status">
+              {t('models.noModelsFound', { defaultValue: 'No models found' })}
+            </div>
+          )}
+          {hiddenModelCount > 0 && (
+            <div className="selector-option selector-option-status" data-testid="model-hidden-count">
+              {t('models.hiddenModelCount', {
+                count: hiddenModelCount,
+                defaultValue: `+ ${hiddenModelCount} more models. Type to search.`,
+              })}
+            </div>
+          )}
           {currentProvider === 'claude' && onLongContextChange && (
             <>
               <div className="selector-divider" />
@@ -301,7 +420,7 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
               <div className="selector-divider" />
               <div
                 className="selector-option selector-option-add"
-                onClick={() => { onAddModel(); setIsOpen(false); }}
+                onClick={() => { onAddModel(); setIsOpen(false); setSearchQuery(''); }}
               >
                 <span className="codicon codicon-add selector-add-icon" />
                 <span>{t('models.addModel')}</span>

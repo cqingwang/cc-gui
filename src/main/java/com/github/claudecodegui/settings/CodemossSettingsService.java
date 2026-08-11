@@ -23,6 +23,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -51,6 +55,160 @@ public class CodemossSettingsService {
     public static final String CODEX_RUNTIME_ACCESS_INACTIVE = "inactive";
     public static final String CODEX_RUNTIME_ACCESS_MANAGED = "managed";
     public static final String CODEX_RUNTIME_ACCESS_CLI_LOGIN = "cli_login";
+
+    public static final String GROK_AUTH_METHOD_AUTO = "auto";
+    public static final String GROK_AUTH_METHOD_OAUTH = "oauth";
+    public static final String GROK_AUTH_METHOD_API_KEY = "api_key";
+    public static final String DEFAULT_GROK_AUTH_METHOD = GROK_AUTH_METHOD_OAUTH;
+
+    public String getGrokAuthMethod() throws IOException {
+        JsonObject config = readConfig();
+        if (!config.has("grok") || config.get("grok").isJsonNull()) {
+            return DEFAULT_GROK_AUTH_METHOD;
+        }
+        JsonObject grok = config.getAsJsonObject("grok");
+        if (!grok.has("authMethod") || grok.get("authMethod").isJsonNull()) {
+            return DEFAULT_GROK_AUTH_METHOD;
+        }
+        String method = grok.get("authMethod").getAsString();
+        return normalizeGrokAuthMethod(method);
+    }
+
+    public void setGrokAuthMethod(String method) throws IOException {
+        String normalized = normalizeGrokAuthMethod(method);
+        JsonObject config = readConfig();
+        JsonObject grok = config.has("grok") && !config.get("grok").isJsonNull()
+                ? config.getAsJsonObject("grok")
+                : new JsonObject();
+        grok.addProperty("authMethod", normalized);
+        config.add("grok", grok);
+        writeConfig(config);
+        LOG.info("[CodemossSettingsService] Set grok.authMethod=" + normalized);
+    }
+
+    public String getGrokApiKey() throws IOException {
+        JsonObject config = readConfig();
+        if (!config.has("grok") || config.get("grok").isJsonNull()) {
+            return "";
+        }
+        JsonObject grok = config.getAsJsonObject("grok");
+        if (!grok.has("apiKey") || grok.get("apiKey").isJsonNull()) {
+            return "";
+        }
+        return grok.get("apiKey").getAsString();
+    }
+
+    public void setGrokApiKey(String apiKey) throws IOException {
+        JsonObject config = readConfig();
+        JsonObject grok = config.has("grok") && !config.get("grok").isJsonNull()
+                ? config.getAsJsonObject("grok")
+                : new JsonObject();
+        String value = apiKey != null ? apiKey.trim() : "";
+        if (value.isEmpty()) {
+            grok.remove("apiKey");
+        } else {
+            grok.addProperty("apiKey", value);
+        }
+        config.add("grok", grok);
+        writeConfig(config);
+        LOG.info("[CodemossSettingsService] Updated grok.apiKey (present=" + !value.isEmpty() + ")");
+    }
+
+    public static String normalizeGrokAuthMethod(String method) {
+        if (method == null || method.trim().isEmpty()) {
+            return DEFAULT_GROK_AUTH_METHOD;
+        }
+        String m = method.trim().toLowerCase();
+        if (GROK_AUTH_METHOD_API_KEY.equals(m) || "xai.api_key".equals(m) || "apikey".equals(m)) {
+            return GROK_AUTH_METHOD_API_KEY;
+        }
+        if (GROK_AUTH_METHOD_AUTO.equals(m)) {
+            return GROK_AUTH_METHOD_AUTO;
+        }
+        if (GROK_AUTH_METHOD_OAUTH.equals(m) || "cached_token".equals(m) || "cli_login".equals(m) || "grok.com".equals(m)) {
+            return GROK_AUTH_METHOD_OAUTH;
+        }
+        return DEFAULT_GROK_AUTH_METHOD;
+    }
+
+    public String getGrokApiBaseUrl() throws IOException {
+        return getGrokStringSetting("apiBaseUrl");
+    }
+
+    public void setGrokApiBaseUrl(String url) throws IOException {
+        setGrokStringSetting("apiBaseUrl", url);
+        LOG.info("[CodemossSettingsService] Set grok.apiBaseUrl=" + redactUrl(url));
+    }
+
+    public String getGrokOauthBaseUrl() throws IOException {
+        return getGrokStringSetting("oauthBaseUrl");
+    }
+
+    public void setGrokOauthBaseUrl(String url) throws IOException {
+        setGrokStringSetting("oauthBaseUrl", url);
+        LOG.info("[CodemossSettingsService] Set grok.oauthBaseUrl=" + redactUrl(url));
+    }
+
+    public String getGrokGatewayOrigin() throws IOException {
+        return getGrokStringSetting("gatewayOrigin");
+    }
+
+    public void setGrokGatewayOrigin(String origin) throws IOException {
+        setGrokStringSetting("gatewayOrigin", origin);
+        LOG.info("[CodemossSettingsService] Set grok.gatewayOrigin=" + redactUrl(origin));
+    }
+
+    public String resolveGrokBaseUrlForAuth(String authMethod, String explicitBaseUrl) throws IOException {
+        if (explicitBaseUrl != null && !explicitBaseUrl.trim().isEmpty()) {
+            return explicitBaseUrl.trim();
+        }
+        String method = normalizeGrokAuthMethod(authMethod);
+        if (GROK_AUTH_METHOD_API_KEY.equals(method)) {
+            return getGrokApiBaseUrl();
+        }
+        if (GROK_AUTH_METHOD_OAUTH.equals(method)) {
+            return getGrokOauthBaseUrl();
+        }
+        String oauth = getGrokOauthBaseUrl();
+        if (!oauth.isEmpty()) {
+            return oauth;
+        }
+        return getGrokApiBaseUrl();
+    }
+
+    private String getGrokStringSetting(String field) throws IOException {
+        JsonObject config = readConfig();
+        if (!config.has("grok") || config.get("grok").isJsonNull()) {
+            return "";
+        }
+        JsonObject grok = config.getAsJsonObject("grok");
+        if (!grok.has(field) || grok.get(field).isJsonNull()) {
+            return "";
+        }
+        return grok.get(field).getAsString();
+    }
+
+    private void setGrokStringSetting(String field, String value) throws IOException {
+        JsonObject config = readConfig();
+        JsonObject grok = config.has("grok") && !config.get("grok").isJsonNull()
+                ? config.getAsJsonObject("grok")
+                : new JsonObject();
+        String v = value != null ? value.trim() : "";
+        if (v.isEmpty()) {
+            grok.remove(field);
+        } else {
+            grok.addProperty(field, v);
+        }
+        config.add("grok", grok);
+        writeConfig(config);
+    }
+
+    private String redactUrl(String url) {
+        if (url == null || url.trim().isEmpty()) {
+            return "(empty)";
+        }
+        return url.trim();
+    }
     private static final String COMMIT_AI_KEY = "commitAi";
     private static final String PROMPT_ENHANCER_KEY = "promptEnhancer";
     private static final String AI_FEATURE_PROVIDER_KEY = "provider";
@@ -249,16 +407,33 @@ public class CodemossSettingsService {
             LOG.warn("[CodemossSettings] Failed to write config: " + e.getMessage());
             throw e;
         }
+        // Security (J): config.json holds provider API keys/tokens; restrict to 0600.
+        hardenFilePermissions(Paths.get(configPath));
     }
 
     private void backupConfig() {
         try {
             Path configPath = pathManager.getConfigFilePath();
             if (Files.exists(configPath)) {
-                Files.copy(configPath, Paths.get(pathManager.getBackupPath()), StandardCopyOption.REPLACE_EXISTING);
+                Path backupPath = Paths.get(pathManager.getBackupPath());
+                Files.copy(configPath, backupPath, StandardCopyOption.REPLACE_EXISTING);
+                // Security (J): the .bak copy also contains secrets; restrict to 0600.
+                hardenFilePermissions(backupPath);
             }
         } catch (Exception e) {
             LOG.warn("[CodemossSettings] Failed to backup config: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Best-effort restrict a file to owner read/write (0600). No-op on non-POSIX
+     * filesystems (e.g. Windows), where the per-user home directory ACL applies. (Security J)
+     */
+    private static void hardenFilePermissions(Path path) {
+        try {
+            Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rw-------"));
+        } catch (UnsupportedOperationException | IOException e) {
+            LOG.debug("[CodemossSettings] Could not set 0600 on " + path + ": " + e.getMessage());
         }
     }
 
@@ -398,6 +573,15 @@ public class CodemossSettingsService {
 
     public void setCustomWorkingDirectory(String projectPath, String customWorkingDir) throws IOException {
         workingDirectoryManager.setCustomWorkingDirectory(projectPath, customWorkingDir);
+    }
+
+    /**
+     * Resolve the normalized effective working directory for a project (custom
+     * directory if configured and valid, otherwise the normalized project path).
+     * This is the directory Claude runs in and the key history is stored under.
+     */
+    public String getEffectiveWorkingDirectory(String projectPath) {
+        return workingDirectoryManager.resolveEffectiveWorkingDirectory(projectPath);
     }
 
     public Map<String, String> getAllWorkingDirectories() throws IOException {
@@ -816,7 +1000,14 @@ public class CodemossSettingsService {
     }
 
     private String getDefaultCodexSandboxMode() {
-        return CODEX_SANDBOX_MODE_DANGER_FULL_ACCESS;
+        // Security (F): default to workspace-write (sandboxed to the project) instead of
+        // danger-full-access (no sandbox), so a prompt-injected Codex command is contained
+        // to the project by default; full access must be an explicit opt-in. Windows keeps
+        // danger-full-access as a platform fallback because the Codex sandbox is experimental
+        // there (mirrors CodexSDKBridge.resolveCodexSandboxMode).
+        return com.github.claudecodegui.util.PlatformUtils.isWindows()
+                ? CODEX_SANDBOX_MODE_DANGER_FULL_ACCESS
+                : CODEX_SANDBOX_MODE_WORKSPACE_WRITE;
     }
 
     // ==================== Provider Management ====================
@@ -863,6 +1054,13 @@ public class CodemossSettingsService {
 
     public List<JsonObject> parseProvidersFromCcSwitchDb(String dbPath) throws IOException {
         return providerManager.parseProvidersFromCcSwitchDb(dbPath);
+    }
+
+    /**
+     * Parse Codex provider configurations from cc-switch.db.
+     */
+    public List<JsonObject> parseCodexProvidersFromCcSwitchDb(String dbPath) throws IOException {
+        return providerManager.parseProvidersFromCcSwitchDb(dbPath, "codex");
     }
 
     public int saveProviders(List<JsonObject> providers) throws IOException {
@@ -1004,7 +1202,20 @@ public class CodemossSettingsService {
      * @throws IOException if reading fails
      */
     public List<JsonObject> getPrompts(PromptScope scope, Project project) throws IOException {
-        return getPromptManager(scope, project).getPrompts();
+        return getPrompts(scope, project, "claude");
+    }
+
+    public List<JsonObject> getPrompts(PromptScope scope, Project project, String provider) throws IOException {
+        String normalizedProvider = normalizePromptProvider(provider);
+        List<JsonObject> result = new ArrayList<>();
+        for (JsonObject prompt : getPromptManager(scope, project).getPrompts()) {
+            if (promptBelongsToProvider(prompt, normalizedProvider)) {
+                JsonObject copy = prompt.deepCopy();
+                copy.addProperty("provider", normalizedProvider);
+                result.add(copy);
+            }
+        }
+        return result;
     }
 
     /**
@@ -1016,7 +1227,23 @@ public class CodemossSettingsService {
      * @throws IOException if writing fails
      */
     public void addPrompt(JsonObject prompt, PromptScope scope, Project project) throws IOException {
-        getPromptManager(scope, project).addPrompt(prompt);
+        addPrompt(prompt, scope, project, "claude");
+    }
+
+    public void addPrompt(JsonObject prompt, PromptScope scope, Project project, String provider) throws IOException {
+        AbstractPromptManager manager = getPromptManager(scope, project);
+        JsonObject copy = prompt.deepCopy();
+        String normalizedProvider = normalizePromptProvider(provider);
+        copy.addProperty("provider", normalizedProvider);
+        if (copy.has("id") && copy.get("id").isJsonPrimitive()) {
+            String id = copy.get("id").getAsString();
+            JsonObject existing = manager.getPrompt(id);
+            if (existing != null && !promptBelongsToProvider(existing, normalizedProvider)) {
+                JsonObject config = manager.readPromptConfig();
+                copy.addProperty("id", manager.generateUniqueId(id, config.getAsJsonObject("prompts")));
+            }
+        }
+        manager.addPrompt(copy);
     }
 
     /**
@@ -1029,7 +1256,19 @@ public class CodemossSettingsService {
      * @throws IOException if writing fails
      */
     public void updatePrompt(String id, JsonObject updates, PromptScope scope, Project project) throws IOException {
-        getPromptManager(scope, project).updatePrompt(id, updates);
+        updatePrompt(id, updates, scope, project, "claude");
+    }
+
+    public void updatePrompt(String id, JsonObject updates, PromptScope scope, Project project, String provider) throws IOException {
+        AbstractPromptManager manager = getPromptManager(scope, project);
+        String normalizedProvider = normalizePromptProvider(provider);
+        JsonObject existing = manager.getPrompt(id);
+        if (!promptBelongsToProvider(existing, normalizedProvider)) {
+            throw new IllegalArgumentException("Prompt with id '" + id + "' not found for provider " + normalizedProvider);
+        }
+        JsonObject copy = updates.deepCopy();
+        copy.addProperty("provider", normalizedProvider);
+        manager.updatePrompt(id, copy);
     }
 
     /**
@@ -1042,7 +1281,17 @@ public class CodemossSettingsService {
      * @throws IOException if writing fails
      */
     public boolean deletePrompt(String id, PromptScope scope, Project project) throws IOException {
-        return getPromptManager(scope, project).deletePrompt(id);
+        return deletePrompt(id, scope, project, "claude");
+    }
+
+    public boolean deletePrompt(String id, PromptScope scope, Project project, String provider) throws IOException {
+        AbstractPromptManager manager = getPromptManager(scope, project);
+        String normalizedProvider = normalizePromptProvider(provider);
+        JsonObject existing = manager.getPrompt(id);
+        if (!promptBelongsToProvider(existing, normalizedProvider)) {
+            return false;
+        }
+        return manager.deletePrompt(id);
     }
 
     /**
@@ -1055,7 +1304,18 @@ public class CodemossSettingsService {
      * @throws IOException if reading fails
      */
     public JsonObject getPrompt(String id, PromptScope scope, Project project) throws IOException {
-        return getPromptManager(scope, project).getPrompt(id);
+        return getPrompt(id, scope, project, "claude");
+    }
+
+    public JsonObject getPrompt(String id, PromptScope scope, Project project, String provider) throws IOException {
+        String normalizedProvider = normalizePromptProvider(provider);
+        JsonObject prompt = getPromptManager(scope, project).getPrompt(id);
+        if (!promptBelongsToProvider(prompt, normalizedProvider)) {
+            return null;
+        }
+        JsonObject copy = prompt.deepCopy();
+        copy.addProperty("provider", normalizedProvider);
+        return copy;
     }
 
     /**
@@ -1069,7 +1329,144 @@ public class CodemossSettingsService {
      * @throws IOException if writing fails
      */
     public Map<String, Object> batchImportPrompts(List<JsonObject> promptsToImport, ConflictStrategy strategy, PromptScope scope, Project project) throws IOException {
-        return getPromptManager(scope, project).batchImportPrompts(promptsToImport, strategy);
+        return batchImportPrompts(promptsToImport, strategy, scope, project, "claude");
+    }
+
+    public Map<String, Object> batchImportPrompts(List<JsonObject> promptsToImport, ConflictStrategy strategy,
+                                                  PromptScope scope, Project project, String provider) throws IOException {
+        AbstractPromptManager manager = getPromptManager(scope, project);
+        String normalizedProvider = normalizePromptProvider(provider);
+        List<JsonObject> scopedPrompts = new ArrayList<>();
+        for (JsonObject prompt : promptsToImport) {
+            JsonObject copy = prompt.deepCopy();
+            copy.addProperty("provider", normalizedProvider);
+            scopedPrompts.add(copy);
+        }
+        return batchImportProviderPrompts(manager, scopedPrompts, strategy, normalizedProvider);
+    }
+
+    public Set<String> detectPromptConflicts(List<JsonObject> promptsToImport, PromptScope scope,
+                                             Project project, String provider) throws IOException {
+        AbstractPromptManager manager = getPromptManager(scope, project);
+        String normalizedProvider = normalizePromptProvider(provider);
+        Set<String> conflicts = new HashSet<>();
+        JsonObject existingPrompts = manager.readPromptConfig().getAsJsonObject("prompts");
+        for (JsonObject prompt : promptsToImport) {
+            if (!prompt.has("id") || !prompt.get("id").isJsonPrimitive()) {
+                continue;
+            }
+            String id = prompt.get("id").getAsString();
+            if (existingPrompts.has(id)
+                    && promptBelongsToProvider(existingPrompts.getAsJsonObject(id), normalizedProvider)) {
+                conflicts.add(id);
+            }
+        }
+        return conflicts;
+    }
+
+    private Map<String, Object> batchImportProviderPrompts(AbstractPromptManager manager,
+                                                           List<JsonObject> promptsToImport,
+                                                           ConflictStrategy strategy,
+                                                           String provider) throws IOException {
+        Map<String, Object> result = new HashMap<>();
+        int imported = 0;
+        int skipped = 0;
+        int updated = 0;
+        List<String> errors = new ArrayList<>();
+
+        JsonObject config = manager.readPromptConfig();
+        JsonObject prompts = config.getAsJsonObject("prompts");
+        Set<String> conflicts = new HashSet<>();
+        for (JsonObject prompt : promptsToImport) {
+            if (!prompt.has("id") || !prompt.get("id").isJsonPrimitive()) {
+                continue;
+            }
+            String id = prompt.get("id").getAsString();
+            if (prompts.has(id) && promptBelongsToProvider(prompts.getAsJsonObject(id), provider)) {
+                conflicts.add(id);
+            }
+        }
+
+        for (JsonObject prompt : promptsToImport) {
+            try {
+                String validationError = manager.validatePrompt(prompt);
+                if (validationError != null) {
+                    errors.add("Validation failed: " + validationError);
+                    skipped++;
+                    continue;
+                }
+
+                String id = prompt.get("id").getAsString();
+                boolean hasSameProviderConflict = conflicts.contains(id);
+
+                if (hasSameProviderConflict) {
+                    switch (strategy) {
+                        case SKIP:
+                            skipped++;
+                            continue;
+                        case OVERWRITE:
+                            JsonObject overwritePrompt = prompt.deepCopy();
+                            overwritePrompt.addProperty("provider", provider);
+                            overwritePrompt.addProperty("updatedAt", System.currentTimeMillis());
+                            prompts.add(id, overwritePrompt);
+                            updated++;
+                            break;
+                        case DUPLICATE:
+                            String duplicateId = manager.generateUniqueId(id, prompts);
+                            JsonObject duplicatePrompt = prompt.deepCopy();
+                            duplicatePrompt.addProperty("id", duplicateId);
+                            duplicatePrompt.addProperty("provider", provider);
+                            if (!duplicatePrompt.has("createdAt")) {
+                                duplicatePrompt.addProperty("createdAt", System.currentTimeMillis());
+                            }
+                            duplicatePrompt.addProperty("updatedAt", System.currentTimeMillis());
+                            prompts.add(duplicateId, duplicatePrompt);
+                            imported++;
+                            break;
+                    }
+                } else {
+                    String targetId = prompts.has(id) ? manager.generateUniqueId(id, prompts) : id;
+                    JsonObject newPrompt = prompt.deepCopy();
+                    newPrompt.addProperty("id", targetId);
+                    newPrompt.addProperty("provider", provider);
+                    if (!newPrompt.has("createdAt")) {
+                        newPrompt.addProperty("createdAt", System.currentTimeMillis());
+                    }
+                    if (!newPrompt.has("updatedAt")) {
+                        newPrompt.addProperty("updatedAt", System.currentTimeMillis());
+                    }
+                    prompts.add(targetId, newPrompt);
+                    imported++;
+                }
+            } catch (Exception e) {
+                errors.add("Failed to import prompt: " + e.getMessage());
+                skipped++;
+            }
+        }
+
+        manager.writePromptConfig(config);
+        result.put("imported", imported);
+        result.put("updated", updated);
+        result.put("skipped", skipped);
+        result.put("errors", errors);
+        result.put("success", errors.isEmpty());
+        return result;
+    }
+
+    public static String normalizePromptProvider(String provider) {
+        return "codex".equalsIgnoreCase(provider) ? "codex" : "claude";
+    }
+
+    private static boolean promptBelongsToProvider(JsonObject prompt, String provider) {
+        if (prompt == null) {
+            return false;
+        }
+        String promptProvider = prompt.has("provider")
+                && prompt.get("provider").isJsonPrimitive()
+                && prompt.get("provider").getAsJsonPrimitive().isString()
+                ? prompt.get("provider").getAsString()
+                : "claude";
+        return normalizePromptProvider(promptProvider).equals(provider);
     }
 
     // ==================== Deprecated Backward-Compatible Methods ====================
@@ -1332,6 +1729,91 @@ public class CodemossSettingsService {
         config.addProperty("taskCompletionNotificationEnabled", enabled);
         writeConfig(config);
         LOG.info("[CodemossSettings] Set task completion notification enabled: " + enabled);
+    }
+
+    // ==================== Ask User Question Notification Management ====================
+
+    /**
+     * Get whether the AskUserQuestion reminder notification is enabled.
+     *
+     * @return whether the reminder notification is enabled, default is false (opt-in)
+     */
+    public boolean getAskUserQuestionNotificationEnabled() throws IOException {
+        JsonObject config = readConfig();
+
+        if (config.has("askUserQuestionNotificationEnabled") && !config.get("askUserQuestionNotificationEnabled").isJsonNull()) {
+            return config.get("askUserQuestionNotificationEnabled").getAsBoolean();
+        }
+
+        return false;
+    }
+
+    /**
+     * Set whether the AskUserQuestion reminder notification is enabled.
+     *
+     * @param enabled whether to enable
+     */
+    public void setAskUserQuestionNotificationEnabled(boolean enabled) throws IOException {
+        JsonObject config = readConfig();
+        config.addProperty("askUserQuestionNotificationEnabled", enabled);
+        writeConfig(config);
+        LOG.info("[CodemossSettings] Set ask user question notification enabled: " + enabled);
+    }
+
+    /**
+     * Get whether the AskUserQuestion reminder sound notification is enabled.
+     *
+     * @return whether the reminder sound is enabled, default is false (opt-in)
+     */
+    public boolean getAskUserQuestionSoundNotificationEnabled() throws IOException {
+        JsonObject config = readConfig();
+
+        if (config.has("askUserQuestionSoundNotificationEnabled")
+                && !config.get("askUserQuestionSoundNotificationEnabled").isJsonNull()) {
+            return config.get("askUserQuestionSoundNotificationEnabled").getAsBoolean();
+        }
+
+        return false;
+    }
+
+    /**
+     * Set whether the AskUserQuestion reminder sound notification is enabled.
+     *
+     * @param enabled whether to enable
+     */
+    public void setAskUserQuestionSoundNotificationEnabled(boolean enabled) throws IOException {
+        JsonObject config = readConfig();
+        config.addProperty("askUserQuestionSoundNotificationEnabled", enabled);
+        writeConfig(config);
+        LOG.info("[CodemossSettings] Set ask user question sound notification enabled: " + enabled);
+    }
+
+    /**
+     * Get whether visual system notifications should only be shown when the IDE is not focused.
+     *
+     * @return whether only-when-unfocused is enabled, default is false
+     */
+    public boolean getSystemNotificationOnlyWhenUnfocused() throws IOException {
+        JsonObject config = readConfig();
+
+        if (config.has("systemNotificationOnlyWhenUnfocused")
+                && !config.get("systemNotificationOnlyWhenUnfocused").isJsonNull()) {
+            return config.get("systemNotificationOnlyWhenUnfocused").getAsBoolean();
+        }
+
+        return false;
+    }
+
+    /**
+     * Set whether visual system notifications should only be shown when the IDE is not focused.
+     *
+     * @param enabled whether to enable
+     */
+    public void setSystemNotificationOnlyWhenUnfocused(boolean enabled) throws IOException {
+        JsonObject config = readConfig();
+        config.addProperty("systemNotificationOnlyWhenUnfocused", enabled);
+        writeConfig(config);
+        LOG.info("[CodemossSettings] Set system notification only when unfocused: " + enabled);
     }
 
     // ==================== AI Feature Toggle Management ====================
@@ -1797,5 +2279,100 @@ public class CodemossSettingsService {
 
     public void saveCodexProviderOrder(List<String> orderedIds) throws IOException {
         codexProviderManager.saveProviderOrder(orderedIds);
+    }
+
+    // ==================== User Model Metadata Management ====================
+
+    /**
+     * Persist user-configured model pricing for a provider family, replacing the whole map.
+     *
+     * @param provider {@code "claude"} or {@code "codex"}
+     * @param pricing  map of model ID → pricing; empty or null clears the provider entry
+     */
+    public void setCustomModelPricing(String provider, Map<String, ModelPricing> pricing) throws IOException {
+        JsonObject config = readConfig();
+
+        JsonObject root;
+        if (config.has("customModelPricing") && config.get("customModelPricing").isJsonObject()) {
+            root = config.getAsJsonObject("customModelPricing");
+        } else {
+            root = new JsonObject();
+            config.add("customModelPricing", root);
+        }
+
+        if (pricing == null || pricing.isEmpty()) {
+            root.remove(provider);
+        } else {
+            JsonObject providerNode = new JsonObject();
+            for (Map.Entry<String, ModelPricing> entry : pricing.entrySet()) {
+                providerNode.add(entry.getKey(), serializeModelPricing(entry.getValue()));
+            }
+            root.add(provider, providerNode);
+        }
+
+        writeConfig(config);
+        LOG.info("[CodemossSettings] Set user model pricing for " + provider
+                + ": " + (pricing == null ? 0 : pricing.size()) + " models");
+    }
+
+    /**
+     * Persist user-configured Codex model context windows, replacing the whole map.
+     */
+    public void setCustomModelContextWindows(String provider, Map<String, Integer> contextWindows) throws IOException {
+        if (!"codex".equalsIgnoreCase(provider)) {
+            LOG.warn("[CodemossSettings] Ignored custom context windows for unsupported provider: " + provider);
+            return;
+        }
+        JsonObject config = readConfig();
+
+        JsonObject root;
+        if (config.has("customModelContextWindows") && config.get("customModelContextWindows").isJsonObject()) {
+            root = config.getAsJsonObject("customModelContextWindows");
+        } else {
+            root = new JsonObject();
+            config.add("customModelContextWindows", root);
+        }
+
+        if (contextWindows == null || contextWindows.isEmpty()) {
+            root.remove("codex");
+        } else {
+            JsonObject providerNode = new JsonObject();
+            for (Map.Entry<String, Integer> entry : contextWindows.entrySet()) {
+                Integer value = entry.getValue();
+                if (value != null && value >= 1_000 && value % 1_000 == 0) {
+                    providerNode.addProperty(entry.getKey(), value);
+                }
+            }
+            if (providerNode.size() == 0) {
+                root.remove("codex");
+            } else {
+                root.add("codex", providerNode);
+            }
+        }
+
+        writeConfig(config);
+        LOG.info("[CodemossSettings] Set user model context windows for codex"
+                + ": " + (contextWindows == null ? 0 : contextWindows.size()) + " models");
+    }
+
+    private JsonObject serializeModelPricing(ModelPricing pricing) {
+        JsonObject node = new JsonObject();
+        if (isValidPrice(pricing.inputCostPer1M())) {
+            node.addProperty("inputCostPer1M", pricing.inputCostPer1M());
+        }
+        if (isValidPrice(pricing.outputCostPer1M())) {
+            node.addProperty("outputCostPer1M", pricing.outputCostPer1M());
+        }
+        if (isValidPrice(pricing.cacheWriteCostPer1M())) {
+            node.addProperty("cacheWriteCostPer1M", pricing.cacheWriteCostPer1M());
+        }
+        if (isValidPrice(pricing.cacheReadCostPer1M())) {
+            node.addProperty("cacheReadCostPer1M", pricing.cacheReadCostPer1M());
+        }
+        return node;
+    }
+
+    private static boolean isValidPrice(Double value) {
+        return value != null && Double.isFinite(value) && value >= 0;
     }
 }

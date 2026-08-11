@@ -36,6 +36,7 @@ import {
   resetCachedQueryFn,
   setCachedQueryFn,
   touchRuntime,
+  createTurnSink,
 } from './runtime-lifecycle.js';
 import {
   SESSION_CLEANUP_INTERVAL_MS,
@@ -140,6 +141,10 @@ function buildQueryOptions(workingDirectory, sdkModelName, permissionMode, maxTh
     ),
     canUseTool,
     settingSources: ['user', 'project', 'local'],
+    // bypassPermissions requires this flag per SDK contract (sdk.d.ts: "Must be set to
+    // true when using permissionMode: 'bypassPermissions'"). Without it a future SDK
+    // version could silently drop bypass and change permission behavior.
+    ...(permissionMode === 'bypassPermissions' && { allowDangerouslySkipPermissions: true }),
     ...(mcpServers && { mcpServers }),
     ...(claudeCliOverride && { pathToClaudeCodeExecutable: claudeCliOverride }),
     systemPrompt: {
@@ -215,7 +220,7 @@ async function buildRequestContext(params, withAttachments, overrides = {}) {
 
   const userMessage = await buildUserMessage(params, withAttachments, requestedSessionId, resolvedModelId);
 
-  const runtimeSignature = buildRuntimeSignature(options, systemPromptAppend, streamingEnabled, runtimeSessionEpoch);
+  const runtimeSignature = buildRuntimeSignature(options, systemPromptAppend, streamingEnabled, runtimeSessionEpoch, modelId);
   console.log('[LIFECYCLE] buildRequestContext sessionId=' + (requestedSessionId || '(new)')
     + ' epoch=' + (runtimeSessionEpoch || '(none)')
     + ' signature=' + runtimeSignature);
@@ -244,7 +249,7 @@ const _sessionCleanupTimer = setInterval(async () => {
 // unref() so the timer does not prevent natural process exit
 _sessionCleanupTimer.unref();
 
-async function executeTurn(runtime, requestContext, turnMeta) {
+  async function executeTurn(runtime, requestContext, turnMeta) {
   if (!runtime || runtime.closed) {
     const err = new Error('Runtime is closed');
     err.runtimeTerminated = true;
@@ -262,13 +267,20 @@ async function executeTurn(runtime, requestContext, turnMeta) {
 
   try {
     beginRuntimeTurn(runtime);
+
+    // Create and register turnSink after beginRuntimeTurn to avoid race
+    // (ensures executeTurn is ready to consume before perpetual reader can push)
+    runtime.turnSink = createTurnSink();
+
     console.log('[MESSAGE_START]');
     runtime.inputStream.enqueue(requestContext.userMessage);
 
     while (true) {
       let next;
       try {
-        next = await runtime.query.next();
+        // Receive message from perpetual reader via turnSink
+        // (perpetual reader owns runtime.query.next())
+        next = await runtime.turnSink.take();
       } catch (error) {
         const wrapped = new Error(error?.message || String(error));
         wrapped.runtimeTerminated = true;
@@ -289,12 +301,23 @@ async function executeTurn(runtime, requestContext, turnMeta) {
         turnState.streamStarted = true;
       }
 
+      // Subagent (sidechain) messages carry a non-null parent_tool_use_id pointing
+      // at the main turn's Agent/Task tool_use. Their detailed thinking and tool
+      // calls belong to the sidechain transcript, which the frontend loads
+      // separately via onSubagentHistoryLoaded - so never emit them into the main
+      // session stream, otherwise the subagent's internals pollute the main chat.
+      // task_notification (type:'system') has no parent_tool_use_id and is preserved.
+      if (msg?.parent_tool_use_id) {
+        continue;
+      }
+
       if (msg?.type === 'stream_event' && turnState.streamingEnabled) {
         turnState.hasStreamEvents = true;
         processStreamEvent(msg, turnState);
         continue;
       }
 
+      // Preserve all existing message processing logic
       if (shouldOutputMessage(msg, turnState)) {
         console.log('[MESSAGE]', JSON.stringify(msg));
       }
@@ -318,6 +341,16 @@ async function executeTurn(runtime, requestContext, turnMeta) {
         if (msg.is_error) {
           throw new Error(msg.result || msg.message || 'API request failed');
         }
+        // A task_notification for a background (run_in_background) Agent that
+        // settles AFTER this result cannot ride the in-turn [MESSAGE] stream:
+        // executeTurn breaks here and clears turnSink in the finally below
+        // (synchronously, before the perpetual reader's next query.next()
+        // resolves), so the perpetual reader routes that late event to the
+        // inter-turn daemon path (emitTaskEvent -> DaemonBridge "task_event"
+        // -> window.onTaskEvent). task_notification that settles BEFORE the
+        // result is still processed above in the in-turn [MESSAGE] stream.
+        // Both paths converge on window.onTaskEvent, which dedups by
+        // tool_use_id + observable fields - see DaemonBridge.handleDaemonEvent.
         break;
       }
     }
@@ -364,6 +397,8 @@ async function executeTurn(runtime, requestContext, turnMeta) {
     }
   } finally {
     endRuntimeTurn(runtime);
+    // Clear turnSink after endRuntimeTurn (reverse of creation order)
+    runtime.turnSink = null;
     // Only clear if this runtime still owns the pointer (not cleared by abort)
     clearActiveTurnRuntimeIf(runtime);
   }
@@ -556,6 +591,121 @@ export async function resetRuntimePersistent(params = {}) {
   }
 }
 
+/**
+ * Hot-swap the permission mode of a live runtime mid-conversation.
+ *
+ * Finds the runtime backing the given session and calls the SDK's
+ * setPermissionMode() plus updates the reactive permissionModeState that the
+ * PreToolUse hook reads on every tool call. Subsequent tool invocations in the
+ * current turn therefore honor the new mode immediately — no runtime restart
+ * and no need to wait for the next user message.
+ *
+ * This is invoked via the daemon's command-queue bypass, so it may execute
+ * while another turn's processRequest is active (activeRequestId set). Any
+ * console.log/error here would be tagged with that turn's id and corrupt its
+ * stdout stream, so logging goes to the original stderr writer and no result
+ * JSON is emitted to stdout — the caller's done signal is the only response.
+ *
+ * When no live runtime exists yet (e.g. before the first message, or the daemon
+ * is recycling the runtime), this is a no-op: the next send_message already
+ * carries the requested mode via buildRequestContext.
+ *
+ * @param {object} params - { sessionId?: string, runtimeSessionEpoch?: string, permissionMode?: string }
+ */
+export async function setPermissionModePersistent(params = {}) {
+  const safeParams = params || {};
+  const sessionId = safeParams.sessionId || null;
+  const epoch = safeParams.runtimeSessionEpoch || null;
+  const targetPermissionMode = normalizePermissionMode(safeParams.permissionMode);
+
+  const log = (msg) => {
+    const w = process.stderr._originalStderrWrite;
+    if (typeof w === 'function') {
+      w(`[LIFECYCLE] ${msg}\n`, 'utf8');
+    } else {
+      process.stderr.write(`[LIFECYCLE] ${msg}\n`);
+    }
+  };
+
+  let runtime = null;
+  if (sessionId) {
+    runtime = getRuntimeForSession(sessionId);
+  }
+  // Fall back to the active turn runtime when it belongs to the same session,
+  // covering the brief window before the session id is promoted onto the runtime.
+  if (!runtime || runtime.closed) {
+    const active = getActiveTurnRuntime();
+    if (active && !active.closed && (!sessionId || active.sessionId === sessionId)) {
+      runtime = active;
+    }
+  }
+
+  if (!runtime || runtime.closed) {
+    log(`setPermissionModePersistent skipped: no live runtime sessionId=${sessionId || '(none)'}`
+      + ` epoch=${epoch || '(none)'} mode=${targetPermissionMode}`);
+    return;
+  }
+
+  if (runtime.currentPermissionMode === targetPermissionMode) {
+    log(`setPermissionModePersistent no-op: already ${targetPermissionMode}`
+      + ` sessionId=${sessionId || '(none)'} epoch=${epoch || '(none)'}`);
+    return;
+  }
+
+  // Entering or leaving Auto (bypassPermissions) cannot be applied live:
+  // allowDangerouslySkipPermissions is a process-launch argv flag frozen at
+  // spawn, and setPermissionMode() (a control request) can neither add nor
+  // remove it. Calling setPermissionMode here would log "applied" while the
+  // subprocess keeps prompting (or keeps skipping, when leaving Auto). So for a
+  // bypass-bit change, DON'T call setPermissionMode — invalidate the runtime
+  // signature so the next send_message rebuilds the runtime with the correct
+  // launch flag (mirrors buildRuntimeSignature's bypassPermissions bit). Update
+  // local state so the intent is recorded; the rebuild spawns fresh regardless.
+  const bypassBitChanged =
+    (targetPermissionMode === 'bypassPermissions')
+      !== (runtime.currentPermissionMode === 'bypassPermissions');
+  if (bypassBitChanged) {
+    runtime.runtimeSignature = '__rebuild-pending-bypass-change__';
+    runtime.currentPermissionMode = targetPermissionMode;
+    if (runtime.permissionModeState) {
+      runtime.permissionModeState.value = targetPermissionMode;
+    }
+    log(`setPermissionModePersistent: bypass bit changed to ${targetPermissionMode};`
+      + ` runtime marked for rebuild on next send sessionId=${sessionId || '(none)'}`
+      + ` epoch=${epoch || '(none)'}`);
+    return;
+  }
+
+  // Push to the SDK first. Only update local state on success — otherwise the
+  // PreToolUse hook would read the new mode while the SDK still enforces the
+  // old one, diverging until the next turn's applyDynamicControls resyncs.
+  // Leaving local state untouched keeps hook and SDK in agreement, and the
+  // Java side's settings write is harmless since the next send_message will
+  // re-apply the requested mode via buildRequestContext.
+  if (typeof runtime.query?.setPermissionMode === 'function') {
+    try {
+      await runtime.query.setPermissionMode(targetPermissionMode);
+    } catch (error) {
+      log(`setPermissionMode failed, local state left unchanged (will resync next turn): ${error.message}`
+        + ` sessionId=${sessionId || '(none)'} epoch=${epoch || '(none)'}`
+        + ` mode=${targetPermissionMode}`);
+      return;
+    }
+  }
+  // Note: a narrow race exists between the await above and these assignments.
+  // If the in-progress turn ends mid-await and a new turn's applyDynamicControls
+  // resets currentPermissionMode, our assignment would clobber that newer value.
+  // The window is a single await tick and the next turn resyncs anyway, so we
+  // accept it rather than add a compare-and-swap against the runtime's epoch.
+  runtime.currentPermissionMode = targetPermissionMode;
+  if (runtime.permissionModeState) {
+    runtime.permissionModeState.value = targetPermissionMode;
+  }
+
+  log(`setPermissionModePersistent applied sessionId=${sessionId || '(none)'}`
+    + ` epoch=${epoch || '(none)'} mode=${targetPermissionMode}`);
+}
+
 export async function abortCurrentTurn() {
   // Atomic swap: clear first to prevent double-disposal from rapid abort calls.
   // JS is single-threaded so assignment is atomic — only the first caller gets
@@ -563,7 +713,18 @@ export async function abortCurrentTurn() {
   const runtime = getActiveTurnRuntime();
   if (!runtime) return;
   console.log('[LIFECYCLE] abortCurrentTurn epoch=' + (runtime.runtimeSessionEpoch || '(none)'));
+
+  // Clear turnSink first to stop incoming messages, then fail it to unblock waiting take()
+  const sinkToClose = runtime.turnSink;
+  runtime.turnSink = null;
+
+  if (sinkToClose) {
+    sinkToClose.fail(new Error('Turn aborted'));
+  }
+
+  // Mark abort after sink is cleared
   runtime.abortRequested = true;
+
   clearActiveTurnRuntime();
 
   try {
@@ -698,6 +859,9 @@ export const __testing = {
   },
   setActiveTurnRuntime(runtime) {
     setActiveTurnRuntime(runtime);
+  },
+  getActiveTurnRuntime() {
+    return getActiveTurnRuntime();
   },
   getRuntimeForSession(sessionId) {
     return getRuntimeForSession(sessionId);

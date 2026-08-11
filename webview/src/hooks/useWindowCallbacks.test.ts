@@ -1,4 +1,5 @@
-import { act, renderHook } from '@testing-library/react';
+import { createElement, useState } from 'react';
+import { act, render, renderHook, waitFor } from '@testing-library/react';
 import { useWindowCallbacks } from './useWindowCallbacks.js';
 import type { UseWindowCallbacksOptions } from './useWindowCallbacks.js';
 import type { ClaudeMessage } from '../types/index.js';
@@ -6,7 +7,9 @@ import { forceWebviewRepaint } from '../utils/forceWebviewRepaint.js';
 
 // Mock the repaint util so we can assert the session-transition path triggers it
 // without touching the real DOM (there is no #app element under jsdom).
-vi.mock('../utils/forceWebviewRepaint.js', () => ({ forceWebviewRepaint: vi.fn() }));
+vi.mock('../utils/forceWebviewRepaint.js', () => ({
+  forceWebviewRepaint: vi.fn((_reason?: string, onRepaint?: () => void) => onRepaint?.()),
+}));
 
 /**
  * Integration tests for useWindowCallbacks — verifies the real window callback
@@ -38,10 +41,14 @@ describe('useWindowCallbacks integration', () => {
     setUsageMaxTokens: vi.fn(),
     setSubagentHistories: vi.fn(),
     setPermissionMode: vi.fn(),
+    setCurrentProvider: vi.fn(),
     setClaudePermissionMode: vi.fn(),
     setCodexPermissionMode: vi.fn(),
     setSelectedClaudeModel: vi.fn(),
     setSelectedCodexModel: vi.fn(),
+    setLongContextEnabled: vi.fn(),
+    setReasoningEffort: vi.fn(),
+    setCodexFastMode: vi.fn(),
     setProviderConfigVersion: vi.fn(),
     setActiveProviderConfig: vi.fn(),
     setClaudeSettingsAlwaysThinkingEnabled: vi.fn(),
@@ -51,6 +58,7 @@ describe('useWindowCallbacks integration', () => {
     setPermissionDialogTimeoutSeconds: vi.fn(),
     setSdkStatus: vi.fn(),
     setSdkStatusLoaded: vi.fn(),
+    setSdkStatusError: vi.fn(),
     setIsRewinding: vi.fn(),
     setRewindDialogOpen: vi.fn(),
     setCurrentRewindRequest: vi.fn(),
@@ -86,6 +94,9 @@ describe('useWindowCallbacks integration', () => {
     openPermissionDialog: vi.fn(),
     openAskUserQuestionDialog: vi.fn(),
     openPlanApprovalDialog: vi.fn(),
+    forceClosePermissionDialog: vi.fn(),
+    forceCloseAskUserQuestionDialog: vi.fn(),
+    forceClosePlanApprovalDialog: vi.fn(),
     openContextUsageDialog: vi.fn(),
     updateContextUsageData: vi.fn(),
     closeContextUsageDialog: vi.fn(),
@@ -102,13 +113,28 @@ describe('useWindowCallbacks integration', () => {
   beforeEach(() => {
     window.__sessionTransitioning = false;
     window.__sessionTransitionToken = null;
+    window.__minAcceptedUpdateSequence = 0;
+    window.__prependedHistoryMessageCount = 0;
+    window.__messageBaseIndex = 0;
     window.__pendingSessionTransitionToast = undefined;
     window.__deniedToolIds = new Set();
     window.sendToJava = vi.fn();
+    window.updateDependencyStatus = undefined;
+    delete (window as unknown as Record<string, unknown>)._appUpdateDependencyStatus;
     // The drain test inspects this slot; if a prior test (or earlier suite run)
     // leaked a value onto window we'd see a false-positive drain. Wipe it here
     // so each test starts from a clean pending state.
     delete (window as unknown as Record<string, unknown>).__pendingPermissionDialogTimeout;
+    delete (window as unknown as Record<string, unknown>).__pendingDependencyStatus;
+    delete window.__pendingBackendTabState;
+    delete window.__pendingUsageUpdate;
+    delete window.__CCGUI_RECOVERY_STATE_APPLIED__;
+    delete window.__lastAcceptedMessageCount;
+    delete window.__pendingHistoryRefreshMessageCount;
+    delete window.__pendingHistoryLoadComplete;
+    delete window.__historySurfaceRefreshEpoch;
+    vi.mocked(forceWebviewRepaint).mockClear();
+    window.__dependencyStatusState = 'pending';
   });
 
   /** Stub timer/rAF globals to execute synchronously for streaming tests. */
@@ -125,9 +151,133 @@ describe('useWindowCallbacks integration', () => {
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
   };
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
+  it('applies Java recovery state without echoing provider or model bridge commands', () => {
+    const currentProviderRef = { current: 'codex' };
+    const opts = createOptions({ currentProviderRef });
+    renderHook(() => useWindowCallbacks(opts));
+    const bridgeCallsBeforeRestore = (window.sendToJava as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    act(() => {
+      window.applyBackendTabState?.(JSON.stringify({
+        provider: 'claude',
+        model: 'claude-opus-4-8[1m]',
+        permissionMode: 'default',
+        reasoningEffort: 'high',
+        codexFastMode: 'normal',
+      }));
+    });
+
+    expect(currentProviderRef.current).toBe('claude');
+    expect(opts.setCurrentProvider).toHaveBeenCalledWith('claude');
+    expect(opts.setSelectedClaudeModel).toHaveBeenCalledWith('claude-opus-4-8');
+    expect(opts.setLongContextEnabled).toHaveBeenCalledWith(true);
+    expect(opts.setReasoningEffort).toHaveBeenCalledWith('high');
+    expect(opts.setCodexFastMode).toHaveBeenCalledWith('normal');
+    expect(window.__CCGUI_RECOVERY_STATE_APPLIED__).toBe(true);
+    expect((window.sendToJava as ReturnType<typeof vi.fn>).mock.calls.length).toBe(bridgeCallsBeforeRestore);
   });
+
+  it('drains Java recovery state buffered before React callback registration', () => {
+    window.__pendingBackendTabState = JSON.stringify({
+      provider: 'codex',
+      model: 'gpt-5.6-sol',
+      permissionMode: 'default',
+      codexFastMode: 'fast',
+    });
+    const opts = createOptions();
+
+    renderHook(() => useWindowCallbacks(opts));
+
+    expect(opts.setCurrentProvider).toHaveBeenCalledWith('codex');
+    expect(opts.setSelectedCodexModel).toHaveBeenCalledWith('gpt-5.6-sol');
+    expect(opts.setCodexFastMode).toHaveBeenCalledWith('fast');
+    expect(window.__pendingBackendTabState).toBeUndefined();
+  });
+
+  it('drains the latest usage update buffered before React callback registration', () => {
+    window.__pendingUsageUpdate = JSON.stringify({
+      percentage: 19,
+      usedTokens: 49300,
+      maxTokens: 258400,
+    });
+    const opts = createOptions();
+
+    renderHook(() => useWindowCallbacks(opts));
+
+    expect(opts.setUsagePercentage).toHaveBeenCalledWith(19);
+    expect(opts.setUsageUsedTokens).toHaveBeenCalledWith(49300);
+    expect(opts.setUsageMaxTokens).toHaveBeenCalledWith(258400);
+    expect(window.__pendingUsageUpdate).toBeUndefined();
+  });
+
+  it('settles dependency status errors without reporting an SDK installation state', () => {
+    const opts = createOptions();
+    renderHook(() => useWindowCallbacks(opts));
+
+    act(() => {
+      window.updateDependencyStatus?.(JSON.stringify({
+        success: false,
+        error: 'status unavailable',
+      }));
+    });
+
+    expect(opts.setSdkStatus).not.toHaveBeenCalled();
+    expect(opts.setSdkStatusLoaded).toHaveBeenCalledWith(false);
+    expect(opts.setSdkStatusError).toHaveBeenCalledWith('status unavailable');
+    expect(window.__dependencyStatusState).toBe('error');
+  });
+
+  it('clears a dependency status error after a valid response', () => {
+    const opts = createOptions();
+    renderHook(() => useWindowCallbacks(opts));
+    const status = {
+      'codex-sdk': { status: 'installed' },
+    };
+
+    act(() => {
+      window.updateDependencyStatus?.(JSON.stringify(status));
+    });
+
+    expect(opts.setSdkStatus).toHaveBeenCalledWith(status);
+    expect(opts.setSdkStatusLoaded).toHaveBeenCalledWith(true);
+    expect(opts.setSdkStatusError).toHaveBeenCalledWith(null);
+    expect(window.__dependencyStatusState).toBe('ready');
+  });
+
+  it('settles malformed dependency status payloads as errors', () => {
+    const opts = createOptions();
+    renderHook(() => useWindowCallbacks(opts));
+
+    act(() => {
+      window.updateDependencyStatus?.('{invalid');
+    });
+
+    expect(opts.setSdkStatusLoaded).toHaveBeenCalledWith(false);
+    expect(opts.setSdkStatusError).toHaveBeenCalledWith(expect.any(String));
+    expect(window.__dependencyStatusState).toBe('error');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    delete window.__codexHistoryPageInfo;
+  });
+
+  /**
+   * Builds opts whose setMessages mock actually runs the updater against a shared
+   * messages buffer, so the production reducer logic is exercised end to end.
+   * Shared by the "marks unresolved tool_use as interrupted" and Issue #1315 suites.
+   */
+  const createOptsWithMessages = (messages: ClaudeMessage[]) => {
+    const buffer = { current: messages };
+    const setMessages = vi.fn((value: ClaudeMessage[] | ((prev: ClaudeMessage[]) => ClaudeMessage[])) => {
+      buffer.current = typeof value === 'function'
+        ? (value as (prev: ClaudeMessage[]) => ClaudeMessage[])(buffer.current)
+        : value;
+    });
+    const opts = createOptions({ setMessages: setMessages as never });
+    return { opts, buffer };
+  };
 
   // ===== historyLoadComplete releases transition guard =====
 
@@ -146,6 +296,20 @@ describe('useWindowCallbacks integration', () => {
 
     expect(window.__sessionTransitioning).toBe(false);
     expect(window.__sessionTransitionToken).toBeNull();
+  });
+
+  it('older Codex page rendering does not release the session transition guard', () => {
+    const opts = createOptions();
+    renderHook(() => useWindowCallbacks(opts));
+    window.__sessionTransitioning = true;
+    window.__sessionTransitionToken = 'newer-transition';
+
+    act(() => {
+      window.codexHistoryPageRenderComplete!();
+    });
+
+    expect(window.__sessionTransitioning).toBe(true);
+    expect(window.__sessionTransitionToken).toBe('newer-transition');
   });
 
   it('historyLoadComplete shows pending session transition toast', () => {
@@ -351,6 +515,485 @@ describe('useWindowCallbacks integration', () => {
     expect(opts.setMessages).toHaveBeenCalled();
   });
 
+  it('reports one DOM commit when restored history arrives after completion', () => {
+    const opts = createOptions();
+    vi.useFakeTimers();
+    renderHook(() => useWindowCallbacks(opts));
+
+    act(() => {
+      window.updateMessages!(JSON.stringify([]), 1);
+      window.historyLoadComplete!('1');
+    });
+
+    expect(window.__pendingHistoryRefreshMessageCount).toBe(1);
+
+    act(() => {
+      window.updateMessages!(JSON.stringify([
+        { type: 'user', content: 'restored history' },
+      ]), 2);
+    });
+
+    expect(window.__pendingHistoryRefreshMessageCount).toBeUndefined();
+    act(() => vi.runAllTimers());
+    expect(window.sendToJava).toHaveBeenCalledWith('history_dom_committed:1');
+
+    act(() => {
+      window.updateMessages!(JSON.stringify([
+        { type: 'user', content: 'normal follow-up' },
+      ]), 3);
+    });
+
+    const historyRefreshCalls = (window.sendToJava as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([payload]) => payload === 'history_dom_committed:1');
+    expect(historyRefreshCalls).toHaveLength(1);
+    vi.useRealTimers();
+  });
+
+  it('drains an early history completion only after the restored message DOM commits', async () => {
+    const restoredMessages: ClaudeMessage[] = [
+      { type: 'assistant', content: 'restored before callback registration' },
+    ];
+    window.__pendingUpdateMessages = {
+      json: JSON.stringify(restoredMessages),
+      sequence: 1,
+    };
+    window.__pendingHistoryLoadComplete = { expectedMessageCount: 1 };
+    let domTextWhenAcknowledged = '';
+    window.sendToJava = vi.fn((payload: string) => {
+      if (payload === 'history_dom_committed:1') {
+        domTextWhenAcknowledged = document.querySelector('[data-testid="history-dom"]')?.textContent ?? '';
+      }
+    });
+
+    const HistoryHarness = () => {
+      const [messages, setMessages] = useState<ClaudeMessage[]>([]);
+      useWindowCallbacks(createOptions({ setMessages }));
+      return createElement(
+        'div',
+        { 'data-testid': 'history-dom' },
+        messages.map(message => message.content).join('|'),
+      );
+    };
+
+    render(createElement(HistoryHarness));
+
+    await waitFor(() => {
+      expect(domTextWhenAcknowledged).toContain('restored before callback registration');
+    });
+    expect(window.__pendingHistoryLoadComplete).toBeUndefined();
+    expect(window.sendToJava).toHaveBeenCalledWith('history_dom_committed:1');
+  });
+
+  it('preserves an explicit zero count buffered before callback registration', async () => {
+    window.__pendingHistoryLoadComplete = { expectedMessageCount: 0 };
+    renderHook(() => useWindowCallbacks(createOptions()));
+
+    await waitFor(() => {
+      expect(window.sendToJava).toHaveBeenCalledWith('history_dom_committed:1');
+    });
+    expect(window.__pendingHistoryLoadComplete).toBeUndefined();
+    expect(window.sendToJava).toHaveBeenCalledWith('history_dom_committed:1');
+  });
+
+  it('reports a DOM commit when the restored-history snapshot arrived first', () => {
+    const opts = createOptions();
+    vi.useFakeTimers();
+    renderHook(() => useWindowCallbacks(opts));
+
+    act(() => {
+      window.updateMessages!(JSON.stringify([
+        { type: 'assistant', content: 'already restored' },
+      ]), 1);
+    });
+    act(() => {
+      window.historyLoadComplete!(1);
+    });
+
+    expect(window.__pendingHistoryRefreshMessageCount).toBeUndefined();
+    act(() => vi.runAllTimers());
+    expect(window.sendToJava).toHaveBeenCalledWith('history_dom_committed:1');
+    vi.useRealTimers();
+  });
+
+  it('keeps the restored-history refresh pending when a stale snapshot is rejected', () => {
+    const opts = createOptions();
+    vi.useFakeTimers();
+    window.__minAcceptedUpdateSequence = 5;
+    renderHook(() => useWindowCallbacks(opts));
+
+    act(() => {
+      window.historyLoadComplete!(1);
+      window.updateMessages!(JSON.stringify([
+        { type: 'assistant', content: 'stale history' },
+      ]), 4);
+    });
+
+    expect(window.__pendingHistoryRefreshMessageCount).toBe(1);
+
+    act(() => {
+      window.updateMessages!(JSON.stringify([
+        { type: 'assistant', content: 'current history' },
+      ]), 5);
+    });
+
+    expect(window.__pendingHistoryRefreshMessageCount).toBeUndefined();
+    act(() => vi.runAllTimers());
+    expect(window.sendToJava).toHaveBeenCalledWith('history_dom_committed:1');
+    vi.useRealTimers();
+  });
+
+  it('cancels a deferred restored-history refresh when the session is cleared', () => {
+    const opts = createOptions();
+    vi.useFakeTimers();
+    renderHook(() => useWindowCallbacks(opts));
+
+    act(() => {
+      window.historyLoadComplete!(1);
+      window.clearMessages!();
+      window.updateMessages!(JSON.stringify([
+        { type: 'assistant', content: 'new session' },
+      ]), 1);
+    });
+
+    act(() => vi.runAllTimers());
+    expect(window.__pendingHistoryRefreshMessageCount).toBeUndefined();
+    expect(window.sendToJava).not.toHaveBeenCalledWith('history_dom_committed:1');
+    expect(forceWebviewRepaint).toHaveBeenCalledWith('session-transition');
+    vi.useRealTimers();
+  });
+
+  it('buffers a Codex history page and prepends it in one ordered state update', () => {
+    const { opts, buffer } = createOptsWithMessages([{ type: 'user', content: 'newer' }]);
+    opts.currentSessionIdRef.current = 'session-1';
+    renderHook(() => useWindowCallbacks(opts));
+    window.__codexHistoryPageInfo = {
+      pageId: 'page-current', sessionId: 'session-1', mode: 'replace',
+      fromTurn: 40, toTurn: 70, totalTurns: 70, hasMore: true, loadedMessageCount: 1,
+    };
+
+    act(() => {
+      window.beginCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-1', sessionId: 'session-1', mode: 'prepend',
+      }));
+      window.appendCodexHistoryPageBatch!('page-1', JSON.stringify([
+        { type: 'user', content: 'older-1' },
+      ]));
+      window.appendCodexHistoryPageBatch!('page-1', JSON.stringify([
+        { type: 'assistant', content: 'older-2' },
+      ]));
+      window.completeCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-1', sessionId: 'session-1', mode: 'prepend',
+        fromTurn: 10, toTurn: 40, totalTurns: 70, hasMore: true, loadedMessageCount: 2,
+      }));
+    });
+
+    expect(buffer.current.map(message => message.content)).toEqual(['older-1', 'older-2', 'newer']);
+    expect(window.__codexHistoryPageInfo?.fromTurn).toBe(10);
+  });
+
+  it('resets the prepended history offset when a page replaces the transcript', () => {
+    const { opts, buffer } = createOptsWithMessages([
+      { type: 'user', content: 'older-user' },
+      { type: 'assistant', content: 'current-answer' },
+    ]);
+    opts.currentSessionIdRef.current = 'session-1';
+    window.__prependedHistoryMessageCount = 1;
+    renderHook(() => useWindowCallbacks(opts));
+
+    act(() => {
+      window.beginCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-replace', sessionId: 'session-1', mode: 'replace',
+      }));
+      window.appendCodexHistoryPageBatch!('page-replace', JSON.stringify([
+        { type: 'user', content: 'replacement' },
+      ]));
+      window.completeCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-replace', sessionId: 'session-1', mode: 'replace',
+        fromTurn: 0, toTurn: 1, totalTurns: 1, hasMore: false, loadedMessageCount: 1,
+      }));
+    });
+
+    expect(buffer.current.map(message => message.content)).toEqual(['replacement']);
+    expect(window.__prependedHistoryMessageCount).toBe(0);
+  });
+
+  it('keeps the streaming assistant index aligned when history is prepended', () => {
+    const { opts, buffer } = createOptsWithMessages([
+      { type: 'user', content: 'current-user' },
+      { type: 'assistant', content: 'streaming-answer', isStreaming: true },
+    ]);
+    opts.currentSessionIdRef.current = 'session-1';
+    opts.isStreamingRef.current = true;
+    opts.streamingMessageIndexRef.current = 1;
+    renderHook(() => useWindowCallbacks(opts));
+    window.__codexHistoryPageInfo = {
+      pageId: 'page-current', sessionId: 'session-1', mode: 'replace',
+      fromTurn: 40, toTurn: 70, totalTurns: 70, hasMore: true, loadedMessageCount: 2,
+    };
+
+    act(() => {
+      window.beginCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-older', sessionId: 'session-1', mode: 'prepend',
+      }));
+      window.appendCodexHistoryPageBatch!('page-older', JSON.stringify([
+        { type: 'user', content: 'older-user' },
+        { type: 'assistant', content: 'older-answer' },
+      ]));
+      window.completeCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-older', sessionId: 'session-1', mode: 'prepend',
+        fromTurn: 10, toTurn: 40, totalTurns: 70, hasMore: true, loadedMessageCount: 2,
+      }));
+    });
+
+    expect(buffer.current.map(message => message.content)).toEqual([
+      'older-user', 'older-answer', 'current-user', 'streaming-answer',
+    ]);
+    expect(opts.streamingMessageIndexRef.current).toBe(3);
+  });
+
+  it('drops a late Codex history page from a previously selected session', () => {
+    const { opts, buffer } = createOptsWithMessages([{ type: 'user', content: 'current' }]);
+    opts.currentSessionIdRef.current = 'session-current';
+    renderHook(() => useWindowCallbacks(opts));
+
+    act(() => {
+      window.beginCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-old', sessionId: 'session-old', mode: 'prepend',
+      }));
+      window.appendCodexHistoryPageBatch!('page-old', JSON.stringify([
+        { type: 'user', content: 'stale' },
+      ]));
+      window.completeCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-old', sessionId: 'session-old', mode: 'prepend',
+        fromTurn: 0, toTurn: 30, totalTurns: 60, hasMore: false, loadedMessageCount: 1,
+      }));
+    });
+
+    expect(buffer.current.map(message => message.content)).toEqual(['current']);
+  });
+
+  it('rejects a non-contiguous Codex history page and allows the UI to retry', () => {
+    const { opts, buffer } = createOptsWithMessages([{ type: 'user', content: 'current' }]);
+    opts.currentSessionIdRef.current = 'session-1';
+    renderHook(() => useWindowCallbacks(opts));
+    window.__codexHistoryPageInfo = {
+      pageId: 'page-current', sessionId: 'session-1', mode: 'replace',
+      fromTurn: 40, toTurn: 70, totalTurns: 70, hasMore: true, loadedMessageCount: 1,
+    };
+
+    act(() => {
+      window.beginCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-gap', sessionId: 'session-1', mode: 'prepend',
+      }));
+      window.completeCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-gap', sessionId: 'session-1', mode: 'prepend',
+        fromTurn: 0, toTurn: 30, totalTurns: 70, hasMore: false, loadedMessageCount: 0,
+      }));
+    });
+
+    expect(buffer.current.map(message => message.content)).toEqual(['current']);
+    expect(opts.addToast).toHaveBeenCalledWith(
+      'Codex history changed while loading; please retry',
+      'error',
+    );
+  });
+
+  it('patches only the transported tail when the full prefix is present', () => {
+    const initial = Array.from({ length: 400 }, (_, index): ClaudeMessage => ({
+      type: index % 2 === 0 ? 'user' : 'assistant',
+      content: `old-${index}`,
+    }));
+    const { opts, buffer } = createOptsWithMessages(initial);
+    renderHook(() => useWindowCallbacks(opts));
+
+    act(() => window.updateMessageTail!(JSON.stringify([
+      { type: 'user', content: 'new-398' },
+      { type: 'assistant', content: 'new-399' },
+    ]), 398, 7));
+
+    expect(buffer.current).toHaveLength(400);
+    expect(buffer.current[397]?.content).toBe('old-397');
+    expect(buffer.current[398]?.content).toBe('new-398');
+    expect(buffer.current[399]?.content).toBe('new-399');
+    expect(window.__messageBaseIndex).toBe(0);
+    expect(window.__minAcceptedUpdateSequence).toBe(7);
+  });
+
+  it('keeps prepended history aligned when patching the backend tail', () => {
+    const initial = Array.from({ length: 400 }, (_, index): ClaudeMessage => ({
+      type: index % 2 === 0 ? 'user' : 'assistant',
+      content: `current-${index}`,
+    }));
+    const older = Array.from({ length: 100 }, (_, index): ClaudeMessage => ({
+      type: index % 2 === 0 ? 'user' : 'assistant',
+      content: `older-${index}`,
+    }));
+    const { opts, buffer } = createOptsWithMessages(initial);
+    opts.currentSessionIdRef.current = 'session-1';
+    renderHook(() => useWindowCallbacks(opts));
+    window.__codexHistoryPageInfo = {
+      pageId: 'page-current', sessionId: 'session-1', mode: 'replace',
+      fromTurn: 40, toTurn: 70, totalTurns: 70, hasMore: true, loadedMessageCount: 400,
+    };
+
+    act(() => {
+      window.beginCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-older', sessionId: 'session-1', mode: 'prepend',
+      }));
+      window.appendCodexHistoryPageBatch!('page-older', JSON.stringify(older));
+      window.completeCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-older', sessionId: 'session-1', mode: 'prepend',
+        fromTurn: 10, toTurn: 40, totalTurns: 70, hasMore: true, loadedMessageCount: 100,
+      }));
+      window.updateMessageTail!(JSON.stringify([
+        { type: 'user', content: 'updated-398' },
+        { type: 'assistant', content: 'updated-399' },
+      ]), 398, 7);
+    });
+
+    expect(buffer.current).toHaveLength(500);
+    expect(buffer.current[99]?.content).toBe('older-99');
+    expect(buffer.current[100]?.content).toBe('current-0');
+    expect(buffer.current[497]?.content).toBe('current-397');
+    expect(buffer.current[498]?.content).toBe('updated-398');
+    expect(buffer.current[499]?.content).toBe('updated-399');
+    expect(window.__prependedHistoryMessageCount).toBe(100);
+    expect(window.__messageBaseIndex).toBe(0);
+  });
+
+  it('preserves prepended history and its cursor across a full backend snapshot', () => {
+    const { opts, buffer } = createOptsWithMessages([
+      { type: 'user', content: 'current-user' },
+      { type: 'assistant', content: 'current-answer' },
+    ]);
+    opts.currentSessionIdRef.current = 'session-1';
+    renderHook(() => useWindowCallbacks(opts));
+    window.__codexHistoryPageInfo = {
+      pageId: 'page-current', sessionId: 'session-1', mode: 'replace',
+      fromTurn: 40, toTurn: 70, totalTurns: 70, hasMore: true, loadedMessageCount: 2,
+    };
+
+    act(() => {
+      window.beginCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-older', sessionId: 'session-1', mode: 'prepend',
+      }));
+      window.appendCodexHistoryPageBatch!('page-older', JSON.stringify([
+        { type: 'user', content: 'older-user' },
+        { type: 'assistant', content: 'older-answer' },
+      ]));
+      window.completeCodexHistoryPage!(JSON.stringify({
+        pageId: 'page-older', sessionId: 'session-1', mode: 'prepend',
+        fromTurn: 10, toTurn: 40, totalTurns: 70, hasMore: true, loadedMessageCount: 2,
+      }));
+      window.updateMessages!(JSON.stringify([
+        { type: 'user', content: 'current-user' },
+        { type: 'assistant', content: 'updated-answer' },
+        { type: 'user', content: 'new-user' },
+      ]), 8);
+    });
+
+    expect(buffer.current.map(message => message.content)).toEqual([
+      'older-user', 'older-answer', 'current-user', 'updated-answer', 'new-user',
+    ]);
+    expect(window.__prependedHistoryMessageCount).toBe(2);
+    expect(window.__codexHistoryPageInfo?.fromTurn).toBe(10);
+  });
+
+  it('reconstructs settled turn metadata after a tail update', () => {
+    const { opts, buffer } = createOptsWithMessages([]);
+    renderHook(() => useWindowCallbacks(opts));
+
+    act(() => window.updateMessageTail!(JSON.stringify([
+      {
+        type: 'user',
+        content: 'question',
+        raw: { type: 'user', timestamp: '2026-07-23T10:00:00.000Z' },
+      },
+      {
+        type: 'assistant',
+        content: 'answer',
+        raw: {
+          type: 'assistant',
+          timestamp: '2026-07-23T10:00:05.000Z',
+          message: {
+            id: 'msg-1',
+            usage: { input_tokens: 12, output_tokens: 3 },
+            content: [{ type: 'text', text: 'answer' }],
+          },
+        },
+      },
+    ]), 0, 1));
+
+    expect(buffer.current[1]?.durationMs).toBe(5_000);
+    expect((buffer.current[1]?.raw as Record<string, unknown>)?.turnUsage).toEqual({
+      input_tokens: 12,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      output_tokens: 3,
+    });
+  });
+
+  it('keeps a recreated tail window aligned across growth and compaction', () => {
+    const { opts, buffer } = createOptsWithMessages([]);
+    renderHook(() => useWindowCallbacks(opts));
+
+    act(() => window.updateMessageTail!(JSON.stringify([
+      { type: 'user', content: 'message-220' },
+      { type: 'assistant', content: 'message-221' },
+    ]), 220, 7));
+    expect(buffer.current.map((message) => message.content)).toEqual(['message-220', 'message-221']);
+    expect(window.__messageBaseIndex).toBe(220);
+
+    act(() => window.updateMessageTail!(JSON.stringify([
+      { type: 'user', content: 'message-221' },
+      { type: 'assistant', content: 'message-222' },
+    ]), 221, 8));
+    expect(buffer.current.map((message) => message.content)).toEqual(['message-221', 'message-222']);
+    expect(window.__messageBaseIndex).toBe(221);
+
+    act(() => window.updateMessageTail!(JSON.stringify([
+      { type: 'user', content: 'compacted-170' },
+      { type: 'assistant', content: 'compacted-171' },
+    ]), 170, 9));
+    expect(buffer.current.map((message) => message.content)).toEqual(['compacted-170', 'compacted-171']);
+    expect(window.__messageBaseIndex).toBe(170);
+  });
+
+  it('ignores stale or invalid long-conversation tail updates', () => {
+    const { opts, buffer } = createOptsWithMessages([
+      { type: 'user', content: 'current' },
+      { type: 'assistant', content: 'answer' },
+    ]);
+    window.__minAcceptedUpdateSequence = 8;
+    renderHook(() => useWindowCallbacks(opts));
+
+    act(() => window.updateMessageTail!(JSON.stringify([
+      { type: 'assistant', content: 'stale' },
+    ]), 1, 7));
+    act(() => window.updateMessageTail!(JSON.stringify([
+      { type: 'assistant', content: 'invalid-base' },
+    ]), '1oops', 9));
+
+    expect(buffer.current.map((message) => message.content)).toEqual(['current', 'answer']);
+    expect(window.__minAcceptedUpdateSequence).toBe(8);
+  });
+
+  it('resets the tail base when a full snapshot arrives', () => {
+    const { opts, buffer } = createOptsWithMessages([]);
+    renderHook(() => useWindowCallbacks(opts));
+    act(() => window.updateMessageTail!(JSON.stringify([
+      { type: 'assistant', content: 'tail-only' },
+    ]), 220, 7));
+
+    act(() => window.updateMessages!(JSON.stringify([
+      { type: 'user', content: 'full-user' },
+      { type: 'assistant', content: 'full-answer' },
+    ]), 8));
+
+    expect(buffer.current.map((message) => message.content)).toEqual(['full-user', 'full-answer']);
+    expect(window.__messageBaseIndex).toBe(0);
+  });
+
   it('patchMessageUuid updates the latest unresolved user message using raw text fallback', () => {
     const opts = createOptions({
       extractRawBlocks: (raw) => {
@@ -537,6 +1180,7 @@ describe('useWindowCallbacks integration', () => {
       streamingMessageIndexRef,
     });
     renderHook(() => useWindowCallbacks(opts));
+    window.__prependedHistoryMessageCount = 12;
 
     act(() => {
       window.clearMessages!();
@@ -551,6 +1195,7 @@ describe('useWindowCallbacks integration', () => {
     expect(isStreamingRef.current).toBe(false);
     expect(streamingContentRef.current).toBe('');
     expect(streamingMessageIndexRef.current).toBe(-1);
+    expect(window.__prependedHistoryMessageCount).toBe(0);
   });
 
   // ===== clearMessages forces a webview repaint to clear JCEF ghosting =====
@@ -829,6 +1474,30 @@ describe('useWindowCallbacks integration', () => {
     expect(updatedState['task-1'].messages[0].content[0].text).toBe('final result');
   });
 
+  it('reassembles oversized subagent history before updating state', () => {
+    const opts = createOptions();
+    renderHook(() => useWindowCallbacks(opts));
+    const payload = JSON.stringify({
+      success: true,
+      toolUseId: 'task-1',
+      messages: [{ type: 'assistant', content: 'large result' }],
+    });
+    const midpoint = Math.floor(payload.length / 2);
+
+    act(() => {
+      window.onSubagentHistoryChunk?.('transfer-1', payload.slice(0, midpoint), false);
+    });
+    expect(opts.setSubagentHistories).not.toHaveBeenCalled();
+
+    act(() => {
+      window.onSubagentHistoryChunk?.('transfer-1', payload.slice(midpoint), true);
+    });
+
+    expect(opts.setSubagentHistories).toHaveBeenCalledTimes(1);
+    const updater = (opts.setSubagentHistories as any).mock.calls[0][0] as (prev: Record<string, unknown>) => Record<string, any>;
+    expect(updater({})['task-1'].messages[0].content).toBe('large result');
+  });
+
   // ===== onStreamEnd idempotency (dual-path delivery) =====
 
   describe('onStreamEnd idempotency', () => {
@@ -885,23 +1554,6 @@ describe('useWindowCallbacks integration', () => {
 
   // ===== Interrupted tool_use cleanup on stream end =====
   describe('onStreamEnd marks unresolved tool_use as interrupted', () => {
-    /**
-     * Builds opts whose setMessages mock actually runs the updater against a
-     * shared messages buffer, so the production reducer logic is exercised.
-     */
-    const createOptsWithMessages = (messages: ClaudeMessage[]) => {
-      const buffer = { current: messages };
-      const setMessages = vi.fn((value: ClaudeMessage[] | ((prev: ClaudeMessage[]) => ClaudeMessage[])) => {
-        buffer.current = typeof value === 'function'
-          ? (value as (prev: ClaudeMessage[]) => ClaudeMessage[])(buffer.current)
-          : value;
-      });
-      const opts = createOptions({ setMessages: setMessages as never });
-      opts.streamingTurnIdRef.current = 0;
-      opts.turnIdCounterRef.current = 0;
-      return { opts, buffer };
-    };
-
     it('adds tool_use IDs without matching tool_result to __deniedToolIds', () => {
       // Setup: last assistant has 3 tool_use blocks, but the following user
       // message only carries the first one's tool_result. This mirrors the
@@ -963,6 +1615,41 @@ describe('useWindowCallbacks integration', () => {
       act(() => { window.onStreamEnd!('5'); });
 
       expect(window.__deniedToolIds?.has('tool-x')).toBe(false);
+    });
+
+    it('REGRESSION: parallel tool_use with SEPARATE tool_result user messages are not falsely denied', () => {
+      // Backend (ClaudeMessageHandler.handleToolResult) creates ONE user message
+      // per tool_result — so 3 parallel tool_use produce 3 consecutive user
+      // messages, each carrying a single tool_result. collectUnresolvedToolUseIds
+      // 'lastTurn' only inspects messages[i+1]; if it does not look beyond the
+      // first result message it will falsely flag tool-2 / tool-3 as interrupted.
+      const assistant: ClaudeMessage = {
+        type: 'assistant',
+        content: 'running parallel batch',
+        raw: {
+          content: [
+            { type: 'tool_use', id: 'tool-1', name: 'bash', input: { command: 'echo a' } },
+            { type: 'tool_use', id: 'tool-2', name: 'bash', input: { command: 'echo b' } },
+            { type: 'tool_use', id: 'tool-3', name: 'bash', input: { command: 'echo c' } },
+          ],
+        } as never,
+        timestamp: new Date().toISOString(),
+      };
+      const resultFor = (id: string): ClaudeMessage => ({
+        type: 'user',
+        content: '',
+        raw: { content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } as never,
+        timestamp: new Date().toISOString(),
+      });
+      const { opts } = createOptsWithMessages([assistant, resultFor('tool-1'), resultFor('tool-2'), resultFor('tool-3')]);
+      renderHook(() => useWindowCallbacks(opts));
+
+      act(() => { window.onStreamStart!(); });
+      act(() => { window.onStreamEnd!('5'); });
+
+      expect(window.__deniedToolIds?.has('tool-1')).toBe(false);
+      expect(window.__deniedToolIds?.has('tool-2')).toBe(false);
+      expect(window.__deniedToolIds?.has('tool-3')).toBe(false);
     });
 
     it('historyLoadComplete scans ALL turns and marks orphan tool_use as denied', () => {
@@ -1055,26 +1742,13 @@ describe('useWindowCallbacks integration', () => {
       expect(window.__deniedToolIds?.has('old-A')).toBe(false);
     });
 
-    it('onPermissionDenied still marks unresolved tool_use (regression guard)', () => {
-      // Sanity check that refactoring onPermissionDenied to share the helper
-      // did not change its observable behavior.
-      const assistant: ClaudeMessage = {
-        type: 'assistant',
-        content: '',
-        raw: {
-          content: [
-            { type: 'tool_use', id: 'denied-1', name: 'bash', input: { command: 'rm' } },
-          ],
-        } as never,
-        timestamp: new Date().toISOString(),
-      };
-      const { opts } = createOptsWithMessages([assistant]);
-      renderHook(() => useWindowCallbacks(opts));
-
-      act(() => { window.onPermissionDenied!(); });
-
-      expect(window.__deniedToolIds?.has('denied-1')).toBe(true);
-    });
+    // NOTE: The legacy `onPermissionDenied still marks unresolved tool_use`
+    // test was removed. It asserted that onPermissionDenied works in isolation,
+    // but the backend (ClaudeChatWindow.interruptDueToPermissionDenial) ALWAYS
+    // calls onStreamEnd immediately after onPermissionDenied in the same EDT
+    // block, so the isolated scenario never happens in production. The real
+    // sequence is now covered by the integration test in the
+    // "onPermissionDenied → onStreamEnd integration" describe block below.
 
     it('stale backend snapshot during streaming must not redirect streamingMessageIndexRef to prior-turn assistant', () => {
       stubSynchronousTimers();
@@ -1225,7 +1899,7 @@ describe('useWindowCallbacks integration', () => {
       });
     });
 
-    it('onBlockReset clears streaming refs to prevent cross-turn content merging', () => {
+    it('onBlockReset keeps streaming refs cumulative across turns (single assistant message)', () => {
       stubSynchronousTimers();
 
       const opts = createOptions();
@@ -1235,33 +1909,33 @@ describe('useWindowCallbacks integration', () => {
       act(() => { window.onStreamStart!(); });
       expect(opts.isStreamingRef.current).toBe(true);
 
-      // Simulate first turn's thinking delta
+      // Simulate first turn's thinking + content deltas
       act(() => { window.onThinkingDelta!('Turn1Thinking'); });
-      expect(opts.streamingThinkingRef.current).toBe('Turn1Thinking');
-
-      // Simulate first turn's content delta
       act(() => { window.onContentDelta!('Turn1Content'); });
-      expect(opts.streamingContentRef.current).toBe('Turn1Content');
 
-      // Block reset signal arrives (new assistant message in stream)
+      // Block reset signal arrives (a new assistant turn within the same
+      // stream). The Java layer keeps ONE assistant message for the whole
+      // turn and appends each turn's text/thinking as additional raw blocks,
+      // so the frontend must keep accumulating to preserve the prefix earlier
+      // turns contributed. Clearing here would break prefix reconciliation.
       act(() => { window.onBlockReset!(); });
 
-      // Streaming refs should be cleared
-      expect(opts.streamingThinkingRef.current).toBe('');
-      expect(opts.streamingContentRef.current).toBe('');
-
-      // But streaming should still be active
+      // Refs are intentionally retained, NOT cleared.
+      expect(opts.streamingThinkingRef.current).toBe('Turn1Thinking');
+      expect(opts.streamingContentRef.current).toBe('Turn1Content');
       expect(opts.isStreamingRef.current).toBe(true);
 
-      // Second turn's deltas arrive - should NOT merge with first turn
+      // Second turn's deltas append to the cumulative buffer.
       act(() => { window.onThinkingDelta!('Turn2Thinking'); });
-      expect(opts.streamingThinkingRef.current).toBe('Turn2Thinking');
+      expect(opts.streamingThinkingRef.current).toBe('Turn1ThinkingTurn2Thinking');
 
       act(() => { window.onContentDelta!('Turn2Content'); });
-      expect(opts.streamingContentRef.current).toBe('Turn2Content');
+      expect(opts.streamingContentRef.current).toBe('Turn1ContentTurn2Content');
 
-      // If onBlockReset was NOT called, we would have "Turn1ThinkingTurn2Thinking"
-      // and "Turn1ContentTurn2Content" (merged content)
+      // Cross-turn separation is enforced downstream by the sync functions'
+      // trailing-block guard (see useStreamingMessages.test.ts: "does not
+      // overwrite a finalized thinking block when the new turn's own block has
+      // not arrived yet"), NOT by clearing the buffers here.
     });
 
     it('onBlockReset is ignored when stream is not active', () => {
@@ -1411,6 +2085,414 @@ describe('useWindowCallbacks integration', () => {
       expect(recovered).toBeDefined();
       expect(recovered!.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
       expect(Number.isNaN(Date.parse(recovered!.timestamp as string))).toBe(false);
+    });
+  });
+
+  // ===== Issue #1315 regression test: React 18 batching fix =====
+  //
+  // These tests exercise the production code path with a REAL setMessages mock that
+  // applies the updater (via createOptsWithMessages), so the side effects inside the
+  // updater — including the __deniedToolIds mutation that must live INSIDE the updater
+  // under React 18 batching — are exercised exactly as they run in production.
+
+  describe('onStreamEnd React 18 batching fix (Issue #1315)', () => {
+    it('should not lose assistant message when interrupted tools exist', () => {
+      // Initial state: streaming assistant with an unresolved tool_use.
+      const initialMessages: ClaudeMessage[] = [
+        {
+          type: 'assistant',
+          content: 'Running command...',
+          isStreaming: true,
+          timestamp: '2026-06-14T10:00:00.000Z',
+          raw: {
+            message: {
+              content: [
+                { type: 'text', text: 'Running command...' },
+                { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'ls' } },
+              ],
+            },
+          } as never,
+        },
+      ];
+
+      const { opts, buffer } = createOptsWithMessages(initialMessages);
+      opts.isStreamingRef.current = true;
+      opts.streamingMessageIndexRef.current = 0;
+      opts.streamingTurnIdRef.current = 10;
+      opts.turnIdCounterRef.current = 10;
+
+      renderHook(() => useWindowCallbacks(opts));
+
+      // Simulate: pending snapshot has final content but no tool_result (interrupted).
+      window.__pendingUpdateJson = JSON.stringify([
+        {
+          type: 'assistant',
+          content: 'Running command... [interrupted]',
+          raw: {
+            message: {
+              content: [
+                { type: 'text', text: 'Running command... [interrupted]' },
+                { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'ls' } },
+              ],
+            },
+          },
+        },
+      ]);
+
+      act(() => {
+        window.onStreamEnd!('20');
+      });
+
+      // The buffer holds the state React would have committed.
+      const result = buffer.current;
+
+      // Verify: assistant message should be finalized, not lost.
+      expect(result).toHaveLength(1);
+      expect(result[0].content).toContain('interrupted');
+      expect(result[0].isStreaming).toBe(false);
+
+      // Verify: interrupted tool should be marked as denied.
+      expect(window.__deniedToolIds?.has('tool-1')).toBe(true);
+
+      // Cleanup
+      delete window.__pendingUpdateJson;
+    });
+
+    it('should handle tool_result recovery and interrupted tool detection together', () => {
+      // Initial state: streaming assistant with two tool_use blocks.
+      const initialMessages: ClaudeMessage[] = [
+        {
+          type: 'assistant',
+          content: 'Running commands...',
+          isStreaming: true,
+          timestamp: '2026-06-14T10:00:00.000Z',
+          raw: {
+            message: {
+              content: [
+                { type: 'text', text: 'Running commands...' },
+                { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'ls' } },
+                { type: 'tool_use', id: 'tool-2', name: 'Read', input: { path: 'file.txt' } },
+              ],
+            },
+          } as never,
+        },
+      ];
+
+      const { opts, buffer } = createOptsWithMessages(initialMessages);
+      opts.isStreamingRef.current = true;
+      opts.streamingMessageIndexRef.current = 0;
+      opts.streamingTurnIdRef.current = 11;
+      opts.turnIdCounterRef.current = 11;
+
+      renderHook(() => useWindowCallbacks(opts));
+
+      // Simulate: pending snapshot has final content with one tool_result, one interrupted.
+      window.__pendingUpdateJson = JSON.stringify([
+        {
+          type: 'assistant',
+          content: 'Running commands... Done',
+          raw: {
+            message: {
+              content: [
+                { type: 'text', text: 'Running commands... Done' },
+                { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'ls' } },
+                { type: 'tool_use', id: 'tool-2', name: 'Read', input: { path: 'file.txt' } },
+              ],
+            },
+          },
+        },
+        {
+          type: 'user',
+          content: '[tool_result]',
+          raw: {
+            content: [
+              { type: 'tool_result', tool_use_id: 'tool-1', content: 'file1.txt\nfile2.js' },
+            ],
+          },
+        },
+      ]);
+
+      act(() => {
+        window.onStreamEnd!('30');
+      });
+
+      const result = buffer.current;
+
+      // Verify: should have assistant + tool_result.
+      expect(result.length).toBeGreaterThanOrEqual(2);
+      expect(result[0].isStreaming).toBe(false);
+
+      // Verify: tool_result should be recovered.
+      const toolResult = result.find((m: ClaudeMessage) => m.content === '[tool_result]');
+      expect(toolResult).toBeDefined();
+
+      // Verify: only tool-2 should be marked as interrupted (tool-1 has a result).
+      expect(window.__deniedToolIds?.has('tool-1')).toBe(false);
+      expect(window.__deniedToolIds?.has('tool-2')).toBe(true);
+
+      // Cleanup
+      delete window.__pendingUpdateJson;
+    });
+
+    it('should not mark tools as interrupted when all have results', () => {
+      // Initial state already carries the tool_result (the normal-completion path:
+      // the SDK delivers results before onStreamEnd).  We do NOT set
+      // __pendingUpdateJson here because onStreamStart() clears it.
+      const initialMessages: ClaudeMessage[] = [
+        {
+          type: 'assistant',
+          content: 'Running command...',
+          isStreaming: true,
+          timestamp: '2026-06-14T10:00:00.000Z',
+          raw: {
+            message: {
+              content: [
+                { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'ls' } },
+              ],
+            },
+          } as never,
+        },
+        {
+          type: 'user',
+          content: '[tool_result]',
+          timestamp: '2026-06-14T10:00:01.000Z',
+          raw: {
+            content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }],
+          } as never,
+        },
+      ];
+
+      const { opts } = createOptsWithMessages(initialMessages);
+      opts.streamingTurnIdRef.current = 12;
+      opts.turnIdCounterRef.current = 12;
+
+      renderHook(() => useWindowCallbacks(opts));
+
+      act(() => {
+        window.onStreamStart!();
+        window.onStreamEnd!('40');
+      });
+
+      // Verify: no tools should be marked as interrupted.
+      expect(window.__deniedToolIds?.has('tool-1')).toBe(false);
+    });
+  });
+
+  // ===== onPermissionDenied → onStreamEnd integration =====
+  //
+  // The backend (ClaudeChatWindow.interruptDueToPermissionDenial) ALWAYS calls
+  // onStreamEnd immediately after onPermissionDenied in the same EDT block.
+  // onPermissionDenied is therefore a no-op in production; the interrupted-tool
+  // scan is owned by onStreamEnd's merged updater. These tests simulate the real
+  // backend sequence so the scan coverage is preserved.
+
+  describe('onPermissionDenied → onStreamEnd integration', () => {
+    it('marks denied tool ids and finalizes assistant when backend calls the real sequence', () => {
+      // Initial state: streaming assistant with an unresolved tool_use that will
+      // be interrupted by the permission denial.
+      const initialMessages: ClaudeMessage[] = [
+        {
+          type: 'assistant',
+          content: 'About to run...',
+          isStreaming: true,
+          timestamp: '2026-06-14T11:00:00.000Z',
+          raw: {
+            message: {
+              content: [
+                { type: 'text', text: 'About to run...' },
+                { type: 'tool_use', id: 'perm-1', name: 'Bash', input: { command: 'rm -rf /' } },
+              ],
+            },
+          } as never,
+        },
+      ];
+
+      const { opts, buffer } = createOptsWithMessages(initialMessages);
+      opts.isStreamingRef.current = true;
+      opts.streamingMessageIndexRef.current = 0;
+      opts.streamingTurnIdRef.current = 20;
+      opts.turnIdCounterRef.current = 20;
+
+      renderHook(() => useWindowCallbacks(opts));
+
+      // The pending snapshot carries the final (interrupted) assistant content.
+      window.__pendingUpdateJson = JSON.stringify([
+        {
+          type: 'assistant',
+          content: 'About to run... [denied]',
+          raw: {
+            message: {
+              content: [
+                { type: 'text', text: 'About to run... [denied]' },
+                { type: 'tool_use', id: 'perm-1', name: 'Bash', input: { command: 'rm -rf /' } },
+              ],
+            },
+          },
+        },
+      ]);
+
+      // Simulate the real backend sequence: onPermissionDenied THEN onStreamEnd
+      // in the same synchronous EDT block (same React batch).
+      act(() => {
+        window.onPermissionDenied!();
+        window.onStreamEnd!('50');
+      });
+
+      const result = buffer.current;
+
+      // The denied tool id must be marked (onStreamEnd's scan owns this now).
+      expect(window.__deniedToolIds?.has('perm-1')).toBe(true);
+
+      // The assistant message must be finalized (last-writer = onStreamEnd wins
+      // the batch and preserves the merged content).
+      expect(result).toHaveLength(1);
+      expect(result[0].content).toContain('denied');
+      expect(result[0].isStreaming).toBe(false);
+
+      delete window.__pendingUpdateJson;
+    });
+
+    it('onPermissionDenied alone does NOT mutate __deniedToolIds (no-op contract)', () => {
+      // Guards the no-op refactor: without the follow-up onStreamEnd, the scan
+      // must not run. (This mirrors a hypothetical future caller that fires
+      // onPermissionDenied in isolation; today the backend never does this.)
+      const initialMessages: ClaudeMessage[] = [
+        {
+          type: 'assistant',
+          content: '',
+          isStreaming: true,
+          timestamp: '2026-06-14T11:00:00.000Z',
+          raw: {
+            message: {
+              content: [
+                { type: 'tool_use', id: 'solo-1', name: 'Bash', input: { command: 'ls' } },
+              ],
+            },
+          } as never,
+        },
+      ];
+
+      const { opts } = createOptsWithMessages(initialMessages);
+      opts.isStreamingRef.current = true;
+      opts.streamingMessageIndexRef.current = 0;
+      opts.streamingTurnIdRef.current = 21;
+      opts.turnIdCounterRef.current = 21;
+
+      renderHook(() => useWindowCallbacks(opts));
+
+      act(() => {
+        window.onPermissionDenied!();
+      });
+
+      // No scan ran — the id is NOT marked.
+      expect(window.__deniedToolIds?.has('solo-1')).toBe(false);
+      // And setMessages was not called by onPermissionDenied (no wasted render).
+      expect((opts.setMessages as any)).not.toHaveBeenCalled();
+    });
+  });
+
+  // ===== onStreamEnd index-guard __turnId fallback (residual risk A) =====
+  //
+  // When an interleaved updateMessages reorders/shrinks the message list so the
+  // snapshot index no longer points at the streaming assistant, onStreamEnd must
+  // fall back to a __turnId re-scan to avoid silently dropping the final content.
+
+  describe('onStreamEnd index-guard __turnId fallback', () => {
+    it('finalizes the assistant found via __turnId when the snapshot index is stale', () => {
+      // Initial state: prev[0] is a user message (simulating a reordered list),
+      // and the streaming assistant (__turnId=30) sits at index 1.
+      const initialMessages: ClaudeMessage[] = [
+        { type: 'user', content: 'reordered question', timestamp: '2026-06-14T12:00:00.000Z' },
+        {
+          type: 'assistant',
+          content: 'partial stream',
+          isStreaming: true,
+          timestamp: '2026-06-14T12:00:01.000Z',
+          __turnId: 30,
+          raw: {
+            message: {
+              content: [
+                { type: 'text', text: 'partial stream' },
+                { type: 'tool_use', id: 'fallback-1', name: 'Bash', input: { command: 'ls' } },
+              ],
+            },
+          } as never,
+        },
+      ];
+
+      const { opts, buffer } = createOptsWithMessages(initialMessages);
+      opts.isStreamingRef.current = true;
+      // Snapshot index points at the user message (index 0) — stale/wrong.
+      opts.streamingMessageIndexRef.current = 0;
+      opts.streamingTurnIdRef.current = 30;
+      opts.turnIdCounterRef.current = 30;
+
+      renderHook(() => useWindowCallbacks(opts));
+
+      // Pending snapshot carries the final assistant content.
+      window.__pendingUpdateJson = JSON.stringify([
+        {
+          type: 'assistant',
+          content: 'partial stream [final]',
+          raw: {
+            message: {
+              content: [
+                { type: 'text', text: 'partial stream [final]' },
+                { type: 'tool_use', id: 'fallback-1', name: 'Bash', input: { command: 'ls' } },
+              ],
+            },
+          },
+        },
+      ]);
+
+      act(() => {
+        window.onStreamEnd!('60');
+      });
+
+      const result = buffer.current;
+
+      // The __turnId=30 assistant at index 1 must be finalized — NOT silently dropped.
+      const finalized = result.find(
+        (m) => m.type === 'assistant' && m.__turnId === 30,
+      );
+      expect(finalized).toBeDefined();
+      expect(finalized!.content).toContain('final');
+      expect(finalized!.isStreaming).toBe(false);
+
+      // The interrupted tool is still flagged by the scan.
+      expect(window.__deniedToolIds?.has('fallback-1')).toBe(true);
+
+      delete window.__pendingUpdateJson;
+    });
+
+    it('does not throw and preserves state when neither index nor __turnId matches', () => {
+      // Snapshot index invalid AND no assistant carries the ended __turnId.
+      // onStreamEnd must degrade gracefully (same no-op behavior as today).
+      const initialMessages: ClaudeMessage[] = [
+        { type: 'user', content: 'orphan state', timestamp: '2026-06-14T12:30:00.000Z' },
+      ];
+
+      const { opts, buffer } = createOptsWithMessages(initialMessages);
+      opts.isStreamingRef.current = true;
+      opts.streamingMessageIndexRef.current = 5; // out of range
+      opts.streamingTurnIdRef.current = 31;
+      opts.turnIdCounterRef.current = 31;
+
+      renderHook(() => useWindowCallbacks(opts));
+
+      // No pending snapshot — nothing to recover.
+      window.__pendingUpdateJson = JSON.stringify([]);
+
+      expect(() => {
+        act(() => {
+          window.onStreamEnd!('70');
+        });
+      }).not.toThrow();
+
+      // No assistant was finalized/added (nothing matched).
+      expect(buffer.current.every((m) => m.type !== 'assistant')).toBe(true);
+
+      delete window.__pendingUpdateJson;
     });
   });
 });

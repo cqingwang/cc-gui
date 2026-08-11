@@ -110,6 +110,14 @@ export interface BehaviorTabProps {
   onBrowseSound?: () => void;
   taskCompletionNotificationEnabled?: boolean;
   onTaskCompletionNotificationEnabledChange?: (enabled: boolean) => void;
+  askUserQuestionNotificationEnabled?: boolean;
+  onAskUserQuestionNotificationEnabledChange?: (enabled: boolean) => void;
+  detailedOutputEnabled?: boolean;
+  onDetailedOutputEnabledChange?: (enabled: boolean) => void;
+  systemNotificationOnlyWhenUnfocused?: boolean;
+  onSystemNotificationOnlyWhenUnfocusedChange?: (enabled: boolean) => void;
+  askUserQuestionSoundNotificationEnabled?: boolean;
+  onAskUserQuestionSoundNotificationEnabledChange?: (enabled: boolean) => void;
   permissionDialogTimeoutSeconds?: number;
   onPermissionDialogTimeoutChange?: (seconds: number) => void;
 }
@@ -144,6 +152,14 @@ const BehaviorTab = ({
   onBrowseSound = () => {},
   taskCompletionNotificationEnabled = false,
   onTaskCompletionNotificationEnabledChange = () => {},
+  askUserQuestionNotificationEnabled = false,
+  onAskUserQuestionNotificationEnabledChange = () => {},
+  detailedOutputEnabled = false,
+  onDetailedOutputEnabledChange = () => {},
+  systemNotificationOnlyWhenUnfocused = false,
+  onSystemNotificationOnlyWhenUnfocusedChange = () => {},
+  askUserQuestionSoundNotificationEnabled = false,
+  onAskUserQuestionSoundNotificationEnabledChange = () => {},
   permissionDialogTimeoutSeconds = DEFAULT_PERMISSION_DIALOG_TIMEOUT_SECONDS,
   onPermissionDialogTimeoutChange = () => {},
 }: BehaviorTabProps) => {
@@ -157,6 +173,11 @@ const BehaviorTab = ({
     { value: 'success', label: t('settings.basic.soundNotification.soundSuccess') },
     { value: 'custom', label: t('settings.basic.soundNotification.soundCustom') },
   ], [t]);
+  const hasAnySystemNotificationEnabled =
+    taskCompletionNotificationEnabled || askUserQuestionNotificationEnabled;
+  const hasAnySoundNotificationEnabled = soundNotificationEnabled || askUserQuestionSoundNotificationEnabled;
+  const hasAnyNotificationDetailSetting =
+    hasAnySystemNotificationEnabled || hasAnySoundNotificationEnabled;
 
   return (
     <div className={styles.tabContent}>
@@ -330,32 +351,6 @@ const BehaviorTab = ({
         </small>
       </div>
 
-      {/* Task completion notification toggle */}
-      <div className={styles.streamingSection}>
-        <div className={styles.fieldHeader}>
-          <span className="codicon codicon-bell" />
-          <span className={styles.fieldLabel}>{t('settings.basic.taskCompletionNotification.label')}</span>
-        </div>
-        <label className={styles.toggleWrapper}>
-          <input
-            type="checkbox"
-            className={styles.toggleInput}
-            checked={taskCompletionNotificationEnabled}
-            onChange={(e) => onTaskCompletionNotificationEnabledChange(e.target.checked)}
-          />
-          <span className={styles.toggleSlider} />
-          <span className={styles.toggleLabel}>
-            {taskCompletionNotificationEnabled
-              ? t('settings.basic.taskCompletionNotification.enabled')
-              : t('settings.basic.taskCompletionNotification.disabled')}
-          </span>
-        </label>
-        <small className={styles.formHint}>
-          <span className="codicon codicon-info" />
-          <span>{t('settings.basic.taskCompletionNotification.hint')}</span>
-        </small>
-      </div>
-
       {/* AI session title generation toggle */}
       <div className={styles.streamingSection}>
         <div className={styles.fieldHeader}>
@@ -410,6 +405,112 @@ const BehaviorTab = ({
         </small>
       </div>
 
+      {/* Detailed output information toggle */}
+      <div className={styles.streamingSection}>
+        <div className={styles.fieldHeader}>
+          <span className="codicon codicon-output" />
+          <span className={styles.fieldLabel}>{t('settings.basic.detailedOutput.label')}</span>
+        </div>
+        <label className={styles.toggleWrapper}>
+          <input
+            type="checkbox"
+            className={styles.toggleInput}
+            checked={detailedOutputEnabled}
+            onChange={(e) => onDetailedOutputEnabledChange(e.target.checked)}
+          />
+          <span className={styles.toggleSlider} />
+          <span className={styles.toggleLabel}>
+            {detailedOutputEnabled
+              ? t('settings.basic.detailedOutput.enabled')
+              : t('settings.basic.detailedOutput.disabled')}
+          </span>
+        </label>
+        <small className={styles.formHint}>
+          <span className="codicon codicon-info" />
+          <span>{t('settings.basic.detailedOutput.hint')}</span>
+        </small>
+      </div>
+
+      {/* ===== Message notification settings (grouped) ===== */}
+
+      {/* AskUserQuestion reminder notification toggle */}
+      <div className={styles.streamingSection}>
+        <div className={styles.fieldHeader}>
+          <span className="codicon codicon-comment-discussion" />
+          <span className={styles.fieldLabel}>{t('settings.basic.askUserQuestionNotification.label')}</span>
+        </div>
+        <label className={styles.toggleWrapper}>
+          <input
+            type="checkbox"
+            className={styles.toggleInput}
+            checked={askUserQuestionNotificationEnabled}
+            onChange={(e) => onAskUserQuestionNotificationEnabledChange(e.target.checked)}
+          />
+          <span className={styles.toggleSlider} />
+          <span className={styles.toggleLabel}>
+            {askUserQuestionNotificationEnabled
+              ? t('settings.basic.askUserQuestionNotification.enabled')
+              : t('settings.basic.askUserQuestionNotification.disabled')}
+          </span>
+        </label>
+        <small className={styles.formHint}>
+          <span className="codicon codicon-info" />
+          <span>{t('settings.basic.askUserQuestionNotification.hint')}</span>
+        </small>
+      </div>
+
+      {/* AskUserQuestion reminder sound notification toggle */}
+      <div className={styles.streamingSection}>
+        <div className={styles.fieldHeader}>
+          <span className="codicon codicon-unmute" />
+          <span className={styles.fieldLabel}>{t('settings.basic.askUserQuestionSoundNotification.label')}</span>
+        </div>
+        <label className={styles.toggleWrapper}>
+          <input
+            type="checkbox"
+            className={styles.toggleInput}
+            checked={askUserQuestionSoundNotificationEnabled}
+            onChange={(e) => onAskUserQuestionSoundNotificationEnabledChange(e.target.checked)}
+          />
+          <span className={styles.toggleSlider} />
+          <span className={styles.toggleLabel}>
+            {askUserQuestionSoundNotificationEnabled
+              ? t('settings.basic.askUserQuestionSoundNotification.enabled')
+              : t('settings.basic.askUserQuestionSoundNotification.disabled')}
+          </span>
+        </label>
+        <small className={styles.formHint}>
+          <span className="codicon codicon-info" />
+          <span>{t('settings.basic.askUserQuestionSoundNotification.hint')}</span>
+        </small>
+      </div>
+
+      {/* Task completion notification toggle */}
+      <div className={styles.streamingSection}>
+        <div className={styles.fieldHeader}>
+          <span className="codicon codicon-bell" />
+          <span className={styles.fieldLabel}>{t('settings.basic.taskCompletionNotification.label')}</span>
+        </div>
+        <label className={styles.toggleWrapper}>
+          <input
+            type="checkbox"
+            className={styles.toggleInput}
+            checked={taskCompletionNotificationEnabled}
+            onChange={(e) => onTaskCompletionNotificationEnabledChange(e.target.checked)}
+          />
+          <span className={styles.toggleSlider} />
+          <span className={styles.toggleLabel}>
+            {taskCompletionNotificationEnabled
+              ? t('settings.basic.taskCompletionNotification.enabled')
+              : t('settings.basic.taskCompletionNotification.disabled')}
+          </span>
+        </label>
+        <small className={styles.formHint}>
+          <span className="codicon codicon-info" />
+          <span>{t('settings.basic.taskCompletionNotification.hint')}</span>
+        </small>
+      </div>
+
       {/* Sound notification */}
       <div className={styles.streamingSection}>
         <div className={styles.fieldHeader}>
@@ -434,83 +535,114 @@ const BehaviorTab = ({
           <span className="codicon codicon-info" />
           <span>{t('settings.basic.soundNotification.hint')}</span>
         </small>
+      </div>
 
-        {soundNotificationEnabled && (
-          <div className={styles.customSoundSection}>
+      {hasAnyNotificationDetailSetting && (
+        <div className={styles.customSoundSection}>
+          {hasAnySystemNotificationEnabled && (
             <div className={styles.soundOnlyWhenUnfocusedSection}>
               <div className={styles.fieldHeader}>
                 <span className="codicon codicon-eye-closed" />
-                <span className={styles.fieldLabel}>{t('settings.basic.soundNotification.onlyWhenUnfocused')}</span>
+                <span className={styles.fieldLabel}>{t('settings.basic.systemNotificationOnlyWhenUnfocused.label')}</span>
               </div>
               <label className={styles.toggleWrapper}>
                 <input
                   type="checkbox"
                   className={styles.toggleInput}
-                  checked={soundOnlyWhenUnfocused}
-                  onChange={(e) => onSoundOnlyWhenUnfocusedChange(e.target.checked)}
+                  checked={systemNotificationOnlyWhenUnfocused}
+                  onChange={(e) => onSystemNotificationOnlyWhenUnfocusedChange(e.target.checked)}
                 />
                 <span className={styles.toggleSlider} />
                 <span className={styles.toggleLabel}>
-                  {soundOnlyWhenUnfocused
-                    ? t('settings.basic.soundNotification.enabled')
-                    : t('settings.basic.soundNotification.disabled')}
+                  {systemNotificationOnlyWhenUnfocused
+                    ? t('settings.basic.systemNotificationOnlyWhenUnfocused.enabled')
+                    : t('settings.basic.systemNotificationOnlyWhenUnfocused.disabled')}
                 </span>
               </label>
               <small className={styles.formHint}>
                 <span className="codicon codicon-info" />
-                <span>{t('settings.basic.soundNotification.onlyWhenUnfocusedHint')}</span>
+                <span>{t('settings.basic.systemNotificationOnlyWhenUnfocused.hint')}</span>
               </small>
             </div>
+          )}
 
-            <div className={styles.fieldHeader}>
-              <span className="codicon codicon-library" />
-              <span className={styles.fieldLabel}>{t('settings.basic.soundNotification.selectSound')}</span>
-            </div>
-            <SoundSelectUpward
-              value={selectedSound}
-              onChange={onSelectedSoundChange}
-              options={soundOptions}
-              onTestSound={onTestSound}
-              testSoundLabel={t('settings.basic.soundNotification.testSound')}
-            />
-
-            {selectedSound === 'custom' && (
-              <div className={styles.customSoundFileSection}>
+          {hasAnySoundNotificationEnabled && (
+            <>
+              <div className={styles.soundOnlyWhenUnfocusedSection}>
                 <div className={styles.fieldHeader}>
-                  <span className="codicon codicon-file-media" />
-                  <span className={styles.fieldLabel}>{t('settings.basic.soundNotification.customSound')}</span>
+                  <span className="codicon codicon-eye-closed" />
+                  <span className={styles.fieldLabel}>{t('settings.basic.soundNotification.onlyWhenUnfocused')}</span>
                 </div>
-                <div className={styles.nodePathInputWrapper}>
+                <label className={styles.toggleWrapper}>
                   <input
-                    type="text"
-                    className={styles.nodePathInput}
-                    placeholder={t('settings.basic.soundNotification.customSoundPlaceholder')}
-                    value={customSoundPath}
-                    onChange={(e) => onCustomSoundPathChange(e.target.value)}
+                    type="checkbox"
+                    className={styles.toggleInput}
+                    checked={soundOnlyWhenUnfocused}
+                    onChange={(e) => onSoundOnlyWhenUnfocusedChange(e.target.checked)}
                   />
-                  <button
-                    className={styles.saveBtn}
-                    onClick={onBrowseSound}
-                    title={t('settings.basic.soundNotification.browse')}
-                  >
-                    <span className="codicon codicon-folder-opened" />
-                  </button>
-                  <button
-                    className={styles.saveBtn}
-                    onClick={onSaveCustomSoundPath}
-                  >
-                    {t('common.save')}
-                  </button>
-                </div>
+                  <span className={styles.toggleSlider} />
+                  <span className={styles.toggleLabel}>
+                    {soundOnlyWhenUnfocused
+                      ? t('settings.basic.soundNotification.enabled')
+                      : t('settings.basic.soundNotification.disabled')}
+                  </span>
+                </label>
                 <small className={styles.formHint}>
                   <span className="codicon codicon-info" />
-                  <span>{t('settings.basic.soundNotification.customSoundHint')}</span>
+                  <span>{t('settings.basic.soundNotification.onlyWhenUnfocusedHint')}</span>
                 </small>
               </div>
-            )}
-          </div>
-        )}
-      </div>
+
+              <div className={styles.fieldHeader}>
+                <span className="codicon codicon-library" />
+                <span className={styles.fieldLabel}>{t('settings.basic.soundNotification.selectSound')}</span>
+              </div>
+              <SoundSelectUpward
+                value={selectedSound}
+                onChange={onSelectedSoundChange}
+                options={soundOptions}
+                onTestSound={onTestSound}
+                testSoundLabel={t('settings.basic.soundNotification.testSound')}
+              />
+
+              {selectedSound === 'custom' && (
+                <div className={styles.customSoundFileSection}>
+                  <div className={styles.fieldHeader}>
+                    <span className="codicon codicon-file-media" />
+                    <span className={styles.fieldLabel}>{t('settings.basic.soundNotification.customSound')}</span>
+                  </div>
+                  <div className={styles.nodePathInputWrapper}>
+                    <input
+                      type="text"
+                      className={styles.nodePathInput}
+                      placeholder={t('settings.basic.soundNotification.customSoundPlaceholder')}
+                      value={customSoundPath}
+                      onChange={(e) => onCustomSoundPathChange(e.target.value)}
+                    />
+                    <button
+                      className={styles.saveBtn}
+                      onClick={onBrowseSound}
+                      title={t('settings.basic.soundNotification.browse')}
+                    >
+                      <span className="codicon codicon-folder-opened" />
+                    </button>
+                    <button
+                      className={styles.saveBtn}
+                      onClick={onSaveCustomSoundPath}
+                    >
+                      {t('common.save')}
+                    </button>
+                  </div>
+                  <small className={styles.formHint}>
+                    <span className="codicon codicon-info" />
+                    <span>{t('settings.basic.soundNotification.customSoundHint')}</span>
+                  </small>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 };

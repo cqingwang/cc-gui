@@ -46,6 +46,7 @@
     "removeAttachment": "अटैचमेंट हटाएं",
     "closePreview": "पूर्वावलोकन बंद करें",
     "loadingDropdown": "लोड हो रहा है...",
+    "modelsLoadFailed": "मॉडल लोड करने में विफल। पुनः प्रयास के लिए क्लिक करें",
     "addAttachment": "अटैचमेंट जोड़ें",
     "stopGeneration": "जनरेशन रोकें",
     "generatingResponse": "प्रतिक्रिया उत्पन्न हो रही है",
@@ -81,7 +82,12 @@
     "disabled": "अक्षम",
     "sdkNotInstalled": "{{provider}} SDK इंस्टॉल नहीं है। चैट शुरू करने के लिए कृपया SDK इंस्टॉल करें।",
     "sdkStatusLoading": "Checking SDK status...",
-    "openSourceBanner": "यह प्रोजेक्ट 100% ओपन सोर्स है (नकली प्रोजेक्ट से सावधान रहें)",
+    "sdkStatusUnavailable": "SDK स्थिति की जांच नहीं हो सकी।",
+    "retrySdkStatus": "पुनः प्रयास करें",
+    "openSourceBanner": "यह प्रोजेक्ट 100% ओपन सोर्स और मुफ़्त है (नकली प्रोजेक्ट से सावधान रहें)",
+    "openSourceBannerStar": "Star",
+    "openSourceBannerStarToast": "रिपॉजिटरी लिंक क्लिपबोर्ड पर कॉपी हो गया — ब्राउज़र में पेस्ट करके खोलें ⭐",
+    "openSourceBannerStarAria": "रिपॉजिटरी लिंक कॉपी करें और GitHub पर स्टार करें",
     "goInstallSdk": "इंस्टॉल करने जाएं",
     "commandNotImplemented": "`{{command}}` सुविधा अभी तक लागू नहीं की गई है।",
     "clearCommandDescription": "बातचीत इतिहास साफ़ करें और नया सत्र शुरू करें",
@@ -90,9 +96,13 @@
     "attachmentsUploaded": "[अटैचमेंट अपलोड हो गए]",
     "streamingConnected": "{{provider}} कनेक्ट हो गया, आपके प्रश्न को समझ रहा है",
     "showEarlierMessages": "{{count}} पुराने संदेश दिखाएं",
+    "showEarlierTurns": "पहले के {{count}} संवाद दौर दिखाएं ({{remaining}} लोड किए हुए शेष)",
+    "loadEarlierTurns": "डिस्क से पहले के {{count}} दौर लोड करें ({{total}} में से {{remaining}} शेष)",
+    "loadingEarlierTurns": "पहले के संवाद लोड हो रहे हैं...",
     "totalDuration": "इस जवाब में लगा समय",
     "tokenUsage": "{{input}} इन / {{output}} आउट",
     "tokenUsageDetail": "टर्न कुल — इनपुट {{input}} · कैश लेखन {{cacheWrite}} · कैश पठन {{cacheRead}} · आउटपुट {{output}}",
+    "cacheHitsWithRatio": " ({{tokens}} कैश हिट, {{ratio}})",
     "search": {
       "ariaLabel": "बातचीत में खोजें",
       "placeholder": "बातचीत में खोजें...",
@@ -231,15 +241,61 @@
       },
       "diffExpanded": {
         "label": "डिफ़ॉल्ट रूप से अंतर दिखाएं",
-        "enabled": "विस्तारित",
-        "disabled": "संक्षिप्त",
+        "enabled": "सक्षम",
+        "disabled": "अक्षम",
         "hint": "सक्षम होने पर, चैट में कोड अंतर डिफ़ॉल्ट रूप से विस्तारित होंगे। अक्षम होने पर, अंतर संक्षिप्त शुरू होते हैं।"
       },
       "taskCompletionNotification": {
-        "label": "कार्य पूर्ण सूचना",
+        "label": "कार्य पूर्ण सिस्टम सूचना",
         "enabled": "सक्षम",
         "disabled": "अक्षम",
         "hint": "सक्षम होने पर, AI कार्य पूरा होने पर सिस्टम सूचना दिखाता है। अक्षम होने पर, कोई सूचना नहीं दिखती।"
+      },
+      "askUserQuestionNotification": {
+        "label": "प्रश्न सिस्टम सूचना",
+        "enabled": "सक्षम",
+        "disabled": "अक्षम",
+        "hint": "सक्षम होने पर, Claude द्वारा प्रश्न पूछने पर सिस्टम सूचना दिखाता है ताकि आप इसे मिस न करें। अक्षम होने पर, कोई सूचना नहीं दिखती।"
+      },
+      "detailedOutput": {
+        "label": "विस्तृत आउटपुट जानकारी",
+        "enabled": "चालू",
+        "disabled": "बंद",
+        "hint": "चालू होने पर, उपलब्ध होने पर संदेशों के नीचे अनुमानित टर्न लागत दिखेगी और इनपुट Token सारांश में कैश हिट शामिल होंगे। Token उपयोग हमेशा दिखाई देता रहेगा।"
+      },
+      "askUserQuestionSoundNotification": {
+        "label": "प्रश्न चेतावनी ध्वनि",
+        "enabled": "सक्षम",
+        "disabled": "अक्षम",
+        "hint": "सक्षम होने पर, Claude द्वारा प्रश्न पूछने पर कॉन्फ़िगर की गई चेतावनी ध्वनि चलती है। नीचे दिए गए ध्वनि चयन और फोकस नियमों का उपयोग करता है."
+      },
+      "systemNotificationOnlyWhenUnfocused": {
+        "label": "सिस्टम सूचनाएं केवल तब दिखाएं जब IDE फोकस में न हो",
+        "enabled": "सक्षम",
+        "disabled": "अक्षम",
+        "hint": "सक्षम होने पर, कार्य पूर्ण और प्रश्न सिस्टम सूचनाएं केवल तब दिखती हैं जब IDE फोकस में न हो।"
+      },
+      "soundNotification": {
+        "label": "कार्य पूर्ण चेतावनी ध्वनि",
+        "enabled": "सक्षम",
+        "disabled": "अक्षम",
+        "hint": "सक्षम होने पर, AI कार्य पूरा होने पर सूचना ध्वनि चलेगी, ताकि स्क्रीन से दूर होने पर भी आपको पता चल सके।",
+        "onlyWhenUnfocused": "चेतावनी ध्वनियां केवल तब चलाएं जब IDE फोकस में न हो",
+        "onlyWhenUnfocusedHint": "सक्षम होने पर, कार्य पूर्ण और प्रश्न चेतावनी ध्वनियां केवल तब चलती हैं जब IDE फोकस में न हो।",
+        "selectSound": "सूचना ध्वनि",
+        "soundDefault": "डिफ़ॉल्ट",
+        "soundChime": "चाइम",
+        "soundBell": "घंटी",
+        "soundDing": "डिंग",
+        "soundSuccess": "सफलता",
+        "soundCustom": "कस्टम...",
+        "customSound": "कस्टम ध्वनि फ़ाइल",
+        "customSoundPlaceholder": "ऑडियो फ़ाइल पथ चुनें या दर्ज करें",
+        "customSoundHint": "WAV, MP3, AIFF प्रारूप समर्थित हैं",
+        "testSound": "परीक्षण",
+        "browse": "ब्राउज़",
+        "useDefault": "डिफ़ॉल्ट उपयोग करें",
+        "customSoundSaved": "कस्टम ध्वनि सहेजी गई"
       },
       "sendShortcut": {
         "label": "भेजने का शॉर्टकट",
@@ -259,6 +315,12 @@
         "reset": "रीसेट करें",
         "hint": "चैट क्षेत्र के पृष्ठभूमि रंग को अनुकूलित करें। थीम डिफ़ॉल्ट का पालन करने के लिए खाली छोड़ दें।"
       },
+      "chatBarColor": {
+        "label": "हेडर और स्टेटस बार का रंग",
+        "custom": "कस्टम",
+        "reset": "रीसेट करें",
+        "hint": "सेशन हेडर और टास्क स्टेटस बार के लिए एक थीम रंग चुनें। वर्तमान UI थीम अपनाने के लिए इसे खाली छोड़ें।"
+      },
       "userMsgColor": {
         "label": "उपयोगकर्ता संदेश रंग",
         "custom": "कस्टम",
@@ -276,13 +338,41 @@
     "providersDesc": "Claude और Codex API प्रदाता कॉन्फ़िगरेशन प्रबंधित करें, विभिन्न API सेवा प्रदाताओं के बीच स्विच करें",
     "providerTab": {
       "claude": "Claude Code",
-      "codex": "Codex"
+      "codex": "Codex",
+      "cli": "CLI"
     },
     "pluginModels": {
       "title": "कस्टम मॉडल",
       "description": "यहाँ जोड़े गए कस्टम मॉडल सभी प्रदाताओं के अंतर्गत दिखाई देंगे, मॉडल चयन सूची में सबसे ऊपर प्रदर्शित होंगे",
       "dialogTitle": "कस्टम मॉडल प्रबंधन",
-      "manage": "मॉडल प्रबंधन"
+      "manage": "मॉडल प्रबंधन",
+      "pricing": {
+        "title": "मूल्य (USD प्रति 1M tokens)",
+        "optionalLabel": "वैकल्पिक",
+        "hint": "वैकल्पिक। उस token प्रकार के लिए डिफ़ॉल्ट दर उपयोग करने हेतु फ़ील्ड खाली छोड़ें।",
+        "inputLabel": "इनपुट",
+        "outputLabel": "आउटपुट",
+        "cacheWriteLabel": "कैश लेखन",
+        "cacheReadLabel": "कैश पठन",
+        "inputShort": "इनपुट",
+        "outputShort": "आउटपुट",
+        "cacheWriteShort": "कैश लेखन",
+        "cacheReadShort": "कैश पठन",
+        "invalidValue": "मूल्य एक गैर-ऋणात्मक संख्या होना चाहिए",
+        "defaultPricing": "डिफ़ॉल्ट मूल्य उपयोग में"
+      },
+      "contextWindow": {
+        "label": "अधिकतम कॉन्टेक्स्ट (K टोकन)",
+        "placeholder": "उदा. 500",
+        "hint": "वैकल्पिक। टोकन को हजारों में पूर्णांक के रूप में दर्ज करें (500 = 500,000 टोकन)। इसका उपयोग केवल प्लगइन के कॉन्टेक्स्ट उपयोग प्रदर्शन में होता है।",
+        "invalidValue": "अधिकतम कॉन्टेक्स्ट K इकाइयों में एक धनात्मक पूर्णांक होना चाहिए",
+        "summary": "कॉन्टेक्स्ट: {{value}} टोकन"
+      },
+      "configuredSectionTitle": "कॉन्फ़िगर किए गए Claude मॉडल",
+      "configuredSectionDesc": "सक्रिय Claude प्रदाता या settings.json के मॉडल पहले से ही चयनकर्ता में दिखते हैं। यहाँ केवल मूल्य बदला जा सकता है।",
+      "configuredEditHint": "यह मॉडल सक्रिय Claude प्रदाता या settings.json द्वारा प्रबंधित है। यहाँ केवल मूल्य बदला जा सकता है।",
+      "customSectionTitle": "कस्टम मॉडल",
+      "editPricing": "मूल्य संपादित करें"
     },
     "dependencies": "SDK निर्भरताएं",
     "dependenciesDesc": "AI SDK निर्भरताओं की इंस्टॉलेशन और अपडेट प्रबंधित करें",
@@ -553,6 +643,8 @@
         "modelMapping": "मॉडल मैपिंग (JSON के env में इंजेक्ट किया जाएगा)",
         "mainModel": "मुख्य मॉडल",
         "mainModelPlaceholder": "उदाहरण: claude-sonnet-4-6",
+        "fableModel": "Fable डिफ़ॉल्ट मॉडल",
+        "fableModelPlaceholder": "उदाहरण: claude-fable-5",
         "haikuModel": "Haiku डिफ़ॉल्ट मॉडल",
         "haikuModelPlaceholder": "उदाहरण: claude-haiku-4-5",
         "sonnetModel": "Sonnet डिफ़ॉल्ट मॉडल",
@@ -579,12 +671,17 @@
       "presets": {
         "custom": "Custom",
         "zhipu": "Zhipu GLM",
-        "kimi": "Kimi K2",
+        "kimi": "Kimi",
+        "kimiCoding": "Kimi Coding",
         "deepseek": "DeepSeek",
         "minimax": "MiniMax",
         "xiaomi": "Xiaomi MiMo",
         "xiaomiPlan": "Xiaomi MiMo Plan",
         "qwen": "Alibaba Qwen",
+        "bailian": "Bailian",
+        "bailianCoding": "Bailian Coding",
+        "longcat": "LongCat",
+        "opencodeGo": "OpenCode Go",
         "openrouter": "OpenRouter"
       }
     },
@@ -603,6 +700,9 @@
         "editTitle": "Edit Provider: {{name}}",
         "addDescription": "Configure new Codex provider, will be written to ~/.codex/ directory",
         "editDescription": "Changes will be applied immediately to ~/.codex/ directory",
+        "officialPreset": "OpenAI Official Direct",
+        "officialSectionHint": "Use your manually entered OPENAI_API_KEY with the official endpoint https://api.openai.com/v1.",
+        "presetHint": "These presets include only third-party or proxy endpoints that match the Claude Code provider set.",
         "providerName": "Provider Name",
         "providerNamePlaceholder": "e.g., Codex Official",
         "configJson": "Config",
@@ -647,32 +747,32 @@
       }
     },
     "agent": {
-      "title": "एजेंट",
+      "title": "प्रॉम्प्ट",
       "create": "बनाएं",
-      "createAgent": "एजेंट बनाएं",
-      "createAgentHint": "एजेंट सेटिंग्स पेज पर जाने के लिए क्लिक करें",
-      "customAgents": "कस्टम एजेंट",
-      "noAgents": "कोई कस्टम एजेंट नहीं",
-      "noAgentsDropdown": "कोई एजेंट नहीं",
+      "createAgent": "प्रॉम्प्ट बनाएं",
+      "createAgentHint": "प्रॉम्प्ट सेटिंग्स पेज पर जाने के लिए क्लिक करें",
+      "customAgents": "कस्टम प्रॉम्प्ट",
+      "noAgents": "कोई कस्टम प्रॉम्प्ट नहीं",
+      "noAgentsDropdown": "कोई प्रॉम्प्ट नहीं",
       "loadFailed": "लोड विफल",
       "loading": "लोड हो रहा है...",
       "menu": "मेनू",
-      "addSuccess": "एजेंट सफलतापूर्वक बनाया गया",
-      "updateSuccess": "एजेंट सफलतापूर्वक अपडेट किया गया",
-      "deleteSuccess": "एजेंट सफलतापूर्वक हटाया गया",
+      "addSuccess": "प्रॉम्प्ट सफलतापूर्वक बनाया गया",
+      "updateSuccess": "प्रॉम्प्ट सफलतापूर्वक अपडेट किया गया",
+      "deleteSuccess": "प्रॉम्प्ट सफलतापूर्वक हटाया गया",
       "operationSuccess": "ऑपरेशन सफल",
       "operationFailed": "ऑपरेशन विफल",
       "deleteConfirmTitle": "हटाने की पुष्टि करें",
-      "deleteConfirmMessage": "क्या आप एजेंट \"{{name}}\" को हटाना चाहते हैं? यह क्रिया पूर्ववत नहीं की जा सकती।",
-      "clearAgent": "चयनित एजेंट साफ़ करें",
+      "deleteConfirmMessage": "क्या आप प्रॉम्प्ट \"{{name}}\" को हटाना चाहते हैं? यह क्रिया पूर्ववत नहीं की जा सकती।",
+      "clearAgent": "चयनित प्रॉम्प्ट साफ़ करें",
       "dialog": {
-        "addTitle": "एजेंट बनाएं",
-        "editTitle": "एजेंट संपादित करें",
+        "addTitle": "प्रॉम्प्ट बनाएं",
+        "editTitle": "प्रॉम्प्ट संपादित करें",
         "name": "नाम",
-        "namePlaceholder": "एजेंट का नाम दर्ज करें",
-        "nameRequired": "कृपया एजेंट का नाम दर्ज करें",
+        "namePlaceholder": "प्रॉम्प्ट का नाम दर्ज करें",
+        "nameRequired": "कृपया प्रॉम्प्ट का नाम दर्ज करें",
         "prompt": "प्रॉम्प्ट",
-        "promptPlaceholder": "एजेंट की भूमिका, स्वर, कार्यप्रवाह, टूल प्राथमिकताएं और नियम दर्ज करें। (वैकल्पिक)",
+        "promptPlaceholder": "प्रॉम्प्ट की भूमिका, स्वर, कार्यप्रवाह, टूल प्राथमिकताएं और नियम दर्ज करें। (वैकल्पिक)",
         "promptHint": "प्रॉम्प्ट बातचीत की शुरुआत में AI को सिस्टम निर्देश के रूप में भेजा जाएगा",
         "confirmAdd": "बनाएं",
         "saveChanges": "सहेजें"
@@ -711,6 +811,56 @@
         "confirmAdd": "Create",
         "saveChanges": "Save"
       }
+    },
+    "cli": {
+      "hint": "These CLIs must be installed and configured in your system terminal. The plugin only detects installation status and version — it will never install them for you. Confirm each CLI works in the terminal before coming back here to use it.",
+      "refresh": "Re-check",
+      "retry": "Retry",
+      "loading": "Checking CLI installation status…",
+      "loadFailed": "Detection failed. Please try again.",
+      "status": {
+        "installed": "Installed",
+        "notInstalled": "Not installed"
+      },
+      "viewInstallGuide": "Install guide",
+      "howToInstall": "Install guide",
+      "copy": "Copy",
+      "copied": "Copied to clipboard",
+      "copyFailed": "Failed to copy",
+      "tools": {
+        "grok": {
+          "name": "Grok CLI",
+          "description": "xAI Grok terminal coding agent"
+        },
+        "kimi": {
+          "name": "Kimi CLI",
+          "description": "Moonshot Kimi Code CLI"
+        },
+        "opencode": {
+          "name": "OpenCode",
+          "description": "Open-source terminal AI coding agent"
+        },
+        "pi": {
+          "name": "PI CLI",
+          "description": "मल्टी-प्रोवाइडर मॉडल सपोर्ट वाला मिनिमल टर्मिनल कोडिंग एजेंट"
+        }
+      },
+      "installDialog": {
+        "title": "Install {{name}}",
+        "lead": "Install {{name}} in your system terminal first and make sure `{{binary}}` is available, then come back and click Re-check. This plugin will not run the installer for you.",
+        "stepOpenTerminal": "Open your system terminal (Terminal / iTerm / PowerShell, etc.)",
+        "stepRunCommand": "Copy and run the install command below",
+        "stepVerify": "After install, run `{{binary}} --version` to verify",
+        "stepReturn": "Return here and click Re-check",
+        "primaryCommand": "Recommended install command (macOS / Linux)",
+        "windowsCommand": "Windows (PowerShell)",
+        "altCommand": "Alternative install method",
+        "openDocs": "Open official docs"
+      },
+      "listTitle": "स्थानीय CLI टूल",
+      "summary": "{{installed}} / {{total}} स्थापित",
+      "moreComingSoon": "जल्द और समर्थन",
+      "copyPath": "पथ कॉपी करें"
     }
   },
   "history": {
@@ -916,48 +1066,20 @@
     "copySuccess": "कॉपी हो गया"
   },
   "usage": {
-    "loading": "सांख्यिकी लोड हो रही है...",
-    "noData": "कोई सांख्यिकी डेटा नहीं",
-    "loadData": "डेटा लोड करें",
-    "currentProject": "वर्तमान परियोजना",
-    "allProjects": "सभी परियोजनाएं",
-    "last7Days": "पिछले 7 दिन",
-    "last30Days": "पिछले 30 दिन",
-    "allTime": "सभी समय",
-    "refreshData": "डेटा रीफ्रेश करें",
-    "estimateNotice": "उपयोग आँकड़े अनुमानित हैं और अशुद्ध हो सकते हैं। इन्हें उपयोग प्रवृत्ति संदर्भ के रूप में उपयोग करें, वास्तविक बिलिंग के रूप में नहीं।",
-    "overview": "अवलोकन",
-    "models": "मॉडल",
-    "sessions": "सत्र",
-    "timeline": "टाइमलाइन",
-    "totalCost": "कुल लागत",
-    "totalSessions": "कुल सत्र",
-    "totalTokens": "कुल टोकन",
-    "avgPerSession": "औसत/सत्र",
-    "comparedToLastWeek": "पिछले सप्ताह की तुलना में",
-    "tokenBreakdown": "टोकन विवरण",
-    "input": "इनपुट",
-    "output": "आउटपुट",
-    "cacheWrite": "कैश लिखें",
-    "cacheRead": "कैश पढ़ें",
-    "topModels": "शीर्ष मॉडल",
-    "byModel": "मॉडल के अनुसार",
-    "sessionCount": "सत्र संख्या",
-    "sessionList": "सत्र सूची",
-    "sortByCost": "लागत के अनुसार",
-    "sortByTime": "समय के अनुसार",
-    "dailyTrend": "दैनिक उपयोग प्रवृत्ति",
-    "noDataInRange": "इस तिथि सीमा में कोई डेटा नहीं",
-    "sessionsCount": "सत्र",
-    "lastUpdated": "अंतिम अपडेट",
-    "today": "आज",
-    "yesterday": "कल",
-    "daysAgo": "दिन पहले",
-    "justNow": "अभी",
-    "minutesAgo": "मिनट पहले",
-    "hoursAgo": "घंटे पहले",
-    "description": "विवरण",
-    "command": "कमांड"
+    "checkingLabel": "tokentracker-cli की जाँच हो रही है…",
+    "installingLabel": "tokentracker-cli इंस्टॉल हो रहा है…",
+    "installingDesc": "इसमें थोड़ा समय लग सकता है। इंस्टॉल पूरा होने पर ऐप फिर से जाँच करेगा और स्थानीय सर्वर शुरू करेगा।",
+    "startingLabel": "tokentracker सर्वर शुरू हो रहा है…",
+    "guideTitle": "उपयोग आँकड़े देखने के लिए tokentracker-cli इंस्टॉल करें",
+    "guideDesc": "उपयोग आँकड़े tokentracker-cli द्वारा प्रदान किए जाते हैं। यह एक लोकल सर्वर चलाता है जो आपके AI टूल्स के token उपयोग को एकत्र कर डैशबोर्ड पर दिखाता है।",
+    "guideInstallLabel": "इंस्टॉल कमांड",
+    "guideCopy": "कॉपी करें",
+    "guideCopied": "कॉपी हो गया",
+    "guideInstallNow": "अभी इंस्टॉल करें",
+    "guideNoteHooks": "पहली बार शुरू होने पर, tokentracker सर्वर इंस्टॉल किए गए AI टूल्स में hooks लिखता है (यही इसका डेटा संग्रह तरीका है)।",
+    "guideNoteTelemetry": "इस ऐप ने इसके लिए अनाम टेलीमेट्री बंद कर दी है।",
+    "errorTitle": "tokentracker सर्वर शुरू नहीं हो सका",
+    "errorRetry": "पुनः प्रयास करें"
   },
   "mcp": {
     "title": "MCP सर्वर",
@@ -967,6 +1089,42 @@
     "manualConfig": "मैनुअल कॉन्फ़िगरेशन",
     "addFromMarket": "MCP बाजार से जोड़ें",
     "marketComingSoon": "MCP बाजार सुविधा अभी तक लागू नहीं, जल्द आ रही है",
+    "import": {
+      "menuLabel": "GitHub Copilot से आयात करें",
+      "title": "GitHub Copilot से आयात करें",
+      "description": "इसके सर्वर आयात करने के लिए GitHub Copilot MCP कॉन्फ़िगरेशन (रूट कुंजी \"servers\") पेस्ट करें।",
+      "placeholder": "{\n  \"servers\": {\n    \"my-server\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"my-mcp-server\"]\n    }\n  }\n}",
+      "previewButton": "पूर्वावलोकन",
+      "previewTitle": "आयात किए जाने वाले सर्वर",
+      "empty": "कॉन्फ़िगरेशन पेस्ट करें और पूर्वावलोकन पर क्लिक करें।",
+      "footerHint": "आयात करने से पहले सर्वर और नाम परिवर्तनों की समीक्षा करें।",
+      "renamedFrom": "{{id}} से नाम बदला गया",
+      "renameSummary": "नाम विरोध के कारण {{count}} का नाम बदला गया",
+      "confirm": "{{count}} सर्वर आयात करें"
+    },
+    "market": {
+      "title": "MCP मार्केटप्लेस",
+      "subtitle": "रजिस्ट्री स्रोत ब्राउज़ करें और इंस्टॉल करने योग्य MCP सर्वर जोड़ें।",
+      "searchPlaceholder": "सर्वर, प्रकाशक या टैग खोजें",
+      "allSources": "सभी स्रोत",
+      "refresh": "मार्केटप्लेस रीफ़्रेश करें",
+      "loading": "मार्केटप्लेस प्रविष्टियाँ लोड हो रही हैं…",
+      "empty": "कोई MCP सर्वर नहीं मिला।",
+      "selectServer": "इंस्टॉलेशन विवरण देखने के लिए कोई सर्वर चुनें।",
+      "footerHint": "सर्वर जोड़ने से पहले कमांड, URL, हेडर और एनवायरनमेंट प्लेसहोल्डर सत्यापित करें।",
+      "addServer": "सर्वर जोड़ें",
+      "official": "आधिकारिक",
+      "installable": "इंस्टॉल करने योग्य",
+      "browseOnly": "केवल ब्राउज़",
+      "repository": "रिपॉज़िटरी",
+      "docs": "दस्तावेज़",
+      "homepage": "होमपेज",
+      "installOption": "इंस्टॉल विकल्प",
+      "riskWarning": "यह विकल्प आपके कंप्यूटर पर एक कमांड चलाता है। जोड़ने से पहले इसकी समीक्षा करें।",
+      "riskWarningUnverified": "यह विकल्प एक अज्ञात कमांड चलाता है। इसे केवल तभी जोड़ें जब आप स्रोत पर भरोसा करते हों।",
+      "noInstall": "यह स्रोत केवल डिस्कवरी मेटाडेटा प्रदान करता है। इसकी रिपॉज़िटरी निर्देश जाँचने के बाद इस सर्वर को मैन्युअल रूप से जोड़ें।",
+      "configPreview": "कॉन्फ़िगरेशन पूर्वावलोकन"
+    },
     "description": "विवरण",
     "command": "कमांड",
     "url": "URL",
@@ -1328,14 +1486,25 @@
   },
   "models": {
     "addModel": "मॉडल जोड़ें",
+    "searchPlaceholder": "मॉडल खोजें",
+    "noModelsFound": "कोई मॉडल नहीं मिला",
+    "hiddenModelCount": "+ {{count}} और मॉडल. खोजने के लिए टाइप करें.",
     "claude": {
       "sonnet46": {
         "label": "Sonnet 4.6",
         "description": "Sonnet 4.6 · डिफ़ॉल्ट अनुशंसित मॉडल"
       },
-      "opus46": {
-        "label": "Opus 4.7",
-        "description": "Opus 4.7 · पिछला फ्लैगशिप मॉडल"
+      "sonnet5": {
+        "label": "Sonnet 5",
+        "description": "Sonnet 5 · Sonnet 4.6 का अपग्रेड मॉडल"
+      },
+      "sonnet47": {
+        "label": "Sonnet 4.7",
+        "description": "Sonnet 4.7 · डिफ़ॉल्ट अनुशंसित मॉडल"
+      },
+      "opus5": {
+        "label": "Opus 5",
+        "description": "Opus 5 · नवीनतम Opus अपग्रेड"
       },
       "opus46_1m": {
         "label": "Opus 4.6",
@@ -1347,7 +1516,7 @@
       },
       "opus48": {
         "label": "Opus 4.8",
-        "description": "Opus 4.8 · नवीनतम और सबसे सक्षम"
+        "description": "Opus 4.8 · पिछली Opus पीढ़ी"
       },
       "fable5": {
         "label": "Fable 5",
@@ -1361,9 +1530,17 @@
       "tooltipDisabled": "Haiku के लिए 1M संदर्भ उपलब्ध नहीं है"
     },
     "codex": {
-      "gpt53codex": {
-        "label": "GPT-5.3-Codex",
-        "description": "नवीनतम फ्रंटियर एजेंटिक कोडिंग मॉडल, उन्नत क्षमताओं के साथ।"
+      "gpt56sol": {
+        "label": "GPT-5.6 Sol",
+        "description": "जटिल पेशेवर कार्यों के लिए फ्रंटियर मॉडल।"
+      },
+      "gpt56terra": {
+        "label": "GPT-5.6 Terra",
+        "description": "बुद्धिमत्ता और लागत में संतुलन वाला GPT-5.6 मॉडल।"
+      },
+      "gpt56luna": {
+        "label": "GPT-5.6 Luna",
+        "description": "लागत-संवेदनशील वर्कलोड के लिए अनुकूलित GPT-5.6 मॉडल।"
       },
       "gpt55": {
         "label": "GPT-5.5",
@@ -1372,30 +1549,6 @@
       "gpt54": {
         "label": "GPT-5.4",
         "description": "उन्नत क्षमताओं के साथ नवीनतम फ्रंटियर मॉडल।"
-      },
-      "gpt52codex": {
-        "label": "GPT-5.2-Codex",
-        "description": "फ्रंटियर एजेंटिक कोडिंग मॉडल।"
-      },
-      "gpt51codexMax": {
-        "label": "GPT-5.1-Codex-Max",
-        "description": "Codex के लिए अनुकूलित फ्लैगशिप मॉडल, गहरी और तेज़ रीज़निंग।"
-      },
-      "gpt54mini": {
-        "label": "GPT-5.4-Mini",
-        "description": "हल्का फ्रंटियर एजेंटिक कोडिंग मॉडल।"
-      },
-      "gpt53codexSpark": {
-        "label": "GPT-5.3-Codex-Spark",
-        "description": "अत्यंत तेज़ कोडिंग मॉडल।"
-      },
-      "gpt52": {
-        "label": "GPT-5.2",
-        "description": "पेशेवर काम और लंबे समय तक चलने वाले एजेंटों के लिए अनुकूलित।"
-      },
-      "gpt51codexMini": {
-        "label": "GPT-5.1-Codex-Mini",
-        "description": "Codex के लिए अनुकूलित। सस्ता और तेज़, लेकिन कम सक्षम।"
       }
     }
   },
@@ -1455,6 +1608,9 @@
     },
     "opencode": {
       "label": "OpenCode"
+    },
+    "pi": {
+      "label": "PI CLI"
     }
   },
   "promptEnhancer": {

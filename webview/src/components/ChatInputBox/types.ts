@@ -295,13 +295,27 @@ export function strip1MContextSuffix(modelId: string | undefined | null): string
   return modelId.replace(/\[1m\]$/i, '');
 }
 
+/**
+ * Fallback Claude model when nothing valid is saved. Must stay in sync with the
+ * entry marked "Use the default model" in CLAUDE_MODELS — never derive this from
+ * CLAUDE_MODELS[0], which is the newest tier and the most likely to be missing
+ * from a user's API relay.
+ */
+export const DEFAULT_CLAUDE_MODEL_ID = 'claude-sonnet-4-7';
+
+/**
+ * Retired model IDs → their current-generation replacement. Lookup happens after
+ * the [1m] suffix is stripped, so keys must be base IDs. Without an entry here a
+ * saved retired model fails validation and silently resets to the fallback.
+ */
 const LEGACY_CLAUDE_MODEL_ID_ALIASES: Record<string, string> = {
-  'claude-opus-4-6[1m]': 'claude-opus-4-6',
+  'claude-sonnet-4-6': 'claude-sonnet-4-7',
+  'claude-opus-4-6': 'claude-opus-4-8',
 };
 
 export function normalizeClaudeModelId(modelId: string | undefined | null): string {
   if (!modelId) {
-    return 'claude-sonnet-4-6';
+    return DEFAULT_CLAUDE_MODEL_ID;
   }
   // First strip any [1m] suffix
   const stripped = strip1MContextSuffix(modelId);
@@ -314,24 +328,29 @@ export function normalizeClaudeModelId(modelId: string | undefined | null): stri
  */
 export const CLAUDE_MODELS: ModelInfo[] = [
   {
-    id: 'claude-opus-4-8',
-    label: 'Opus 4.8',
-    description: 'Opus 4.8 · Latest and most capable',
-  },
-  {
-    id: 'claude-opus-4-7',
-    label: 'Opus 4.7',
-    description: 'Opus 4.7 · Previous flagship model',
-  },
-  {
     id: 'claude-fable-5',
     label: 'Fable 5',
     description: 'Fable 5 · Most powerful · Mythos-class',
   },
   {
-    id: 'claude-sonnet-4-6',
-    label: 'Sonnet 4.6',
-    description: 'Sonnet 4.6 · Use the default model',
+    id: 'claude-opus-5',
+    label: 'Opus 5',
+    description: 'Opus 5 · Latest Opus upgrade',
+  },
+  {
+    id: 'claude-opus-4-8',
+    label: 'Opus 4.8',
+    description: 'Opus 4.8 · Previous Opus generation',
+  },
+  {
+    id: 'claude-sonnet-5',
+    label: 'Sonnet 5',
+    description: 'Sonnet 5 · Upgraded Sonnet model',
+  },
+  {
+    id: 'claude-sonnet-4-7',
+    label: 'Sonnet 4.7',
+    description: 'Sonnet 4.7 · Use the default model',
   },
   {
     id: 'claude-haiku-4-5',
@@ -345,6 +364,21 @@ export const CLAUDE_MODELS: ModelInfo[] = [
  */
 export const CODEX_MODELS: ModelInfo[] = [
   {
+    id: 'gpt-5.6-sol',
+    label: 'GPT-5.6 Sol',
+    description: 'Frontier model for complex professional work.',
+  },
+  {
+    id: 'gpt-5.6-terra',
+    label: 'GPT-5.6 Terra',
+    description: 'GPT-5.6 model that balances intelligence and cost.',
+  },
+  {
+    id: 'gpt-5.6-luna',
+    label: 'GPT-5.6 Luna',
+    description: 'GPT-5.6 model optimized for cost-sensitive workloads.',
+  },
+  {
     id: 'gpt-5.5',
     label: 'GPT-5.5',
     description: 'Latest frontier model with stronger capabilities.',
@@ -354,40 +388,77 @@ export const CODEX_MODELS: ModelInfo[] = [
     label: 'GPT-5.4',
     description: 'Latest frontier model with enhanced capabilities.',
   },
+];
+
+/**
+ * Grok CLI `-m` value must be a **config profile name** from
+ * `~/.grok/config.toml` (`[model."name"]`), NOT the nested `model = "grok-4.5"`
+ * upstream id. Your default profile is typically:
+ *
+ *   [models]
+ *   default = "grok"
+ *
+ *   [model."grok"]
+ *   model = "grok-4.5"
+ *   base_url = "..."
+ *   api_key = "..."
+ *
+ * Passing `-m grok-4.5` hits official cli-chat-proxy and ignores custom base_url/api_key.
+ */
+export const GROK_DEFAULT_MODEL_ID = 'grok';
+
+/**
+ * Grok CLI model picker entries.
+ * id = profile name for CLI `-m`; label can show the human-facing model name.
+ */
+export const GROK_MODELS: ModelInfo[] = [
   {
-    id: 'gpt-5.2-codex',
-    label: 'GPT-5.2-Codex',
-    description: 'Frontier agentic coding model.',
+    id: GROK_DEFAULT_MODEL_ID,
+    label: 'Grok 4.5',
+    description: 'xAI Grok 4.5',
+  },
+];
+
+/** Kimi CLI default: omit `--model` when empty / auto. */
+export const KIMI_DEFAULT_MODEL_ID = 'auto';
+
+export const KIMI_MODELS: ModelInfo[] = [
+  {
+    id: KIMI_DEFAULT_MODEL_ID,
+    label: 'Kimi Auto',
+    description: 'Use Kimi CLI default model',
   },
   {
-    id: 'gpt-5.1-codex-max',
-    label: 'GPT-5.1-Codex-Max',
-    description: 'Codex-optimized flagship for deep and fast reasoning.',
+    id: 'kimi-k2.5',
+    label: 'Kimi K2.5',
+    description: 'Moonshot Kimi coding model',
   },
   {
-    id: 'gpt-5.4-mini',
-    label: 'GPT-5.4-Mini',
-    description: 'Smaller frontier agentic coding model.',
+    id: 'kimi-k3',
+    label: 'Kimi K3',
+    description: 'Moonshot Kimi K3',
   },
+];
+
+/** OpenCode default: omit `--model` so CLI resolves its own default. */
+export const OPENCODE_DEFAULT_MODEL_ID = 'opencode-default';
+
+export const OPENCODE_MODELS: ModelInfo[] = [
   {
-    id: 'gpt-5.3-codex',
-    label: 'GPT-5.3-Codex',
-    description: 'Latest frontier agentic coding model with enhanced capabilities.',
+    id: OPENCODE_DEFAULT_MODEL_ID,
+    label: 'OpenCode Default',
+    description: 'Use OpenCode CLI default model',
   },
+];
+
+/** PI default: omit `--model` so CLI resolves its own default. */
+export const PI_DEFAULT_MODEL_ID = 'auto';
+
+export const PI_MODELS: ModelInfo[] = [
   {
-    id: 'gpt-5.3-codex-spark',
-    label: 'GPT-5.3-Codex-Spark',
-    description: 'Ultra-fast coding model.',
-  },
-  {
-    id: 'gpt-5.2',
-    label: 'GPT-5.2',
-    description: 'Optimized for professional work and long-running agents.',
-  },
-  {
-    id: 'gpt-5.1-codex-mini',
-    label: 'GPT-5.1-Codex-Mini',
-    description: 'Optimized for Codex. Cheaper, faster, but less capable.',
+    id: PI_DEFAULT_MODEL_ID,
+    label: 'PI Auto',
+    description: 'Use PI CLI default model',
   },
 ];
 
@@ -404,6 +475,8 @@ export interface ProviderInfo {
   label: string;
   icon: string;
   enabled: boolean;
+  /** When true, show a Beta badge and first-click notice dialog. */
+  beta?: boolean;
 }
 
 /**
@@ -412,8 +485,10 @@ export interface ProviderInfo {
 export const AVAILABLE_PROVIDERS: ProviderInfo[] = [
   { id: 'claude', label: 'Claude Code', icon: 'codicon-terminal', enabled: true },
   { id: 'codex', label: 'Codex', icon: 'codicon-terminal', enabled: true },
-  { id: 'gemini', label: 'Gemini Cli', icon: 'codicon-terminal', enabled: false },
-  { id: 'opencode', label: 'OpenCode', icon: 'codicon-terminal', enabled: false },
+  { id: 'grok', label: 'Grok CLI', icon: 'codicon-terminal', enabled: true, beta: true },
+  { id: 'kimi', label: 'Kimi CLI', icon: 'codicon-terminal', enabled: true, beta: true },
+  { id: 'opencode', label: 'OpenCode', icon: 'codicon-terminal', enabled: true, beta: true },
+  { id: 'pi', label: 'PI CLI', icon: 'codicon-terminal', enabled: true, beta: true },
 ];
 
 /**
@@ -422,10 +497,12 @@ export const AVAILABLE_PROVIDERS: ProviderInfo[] = [
  */
 export const EFFORT_SUPPORTED_CLAUDE_MODELS = new Set([
   'claude-fable-5',
+  'claude-opus-5',
   'claude-opus-4-8',
-  'claude-opus-4-7',
   'claude-opus-4-6',
   'claude-opus-4-6[1m]',
+  'claude-sonnet-5',
+  'claude-sonnet-4-7',
   'claude-sonnet-4-6',
 ]);
 
@@ -434,8 +511,8 @@ export const EFFORT_SUPPORTED_CLAUDE_MODELS = new Set([
  */
 export const XHIGH_EFFORT_CLAUDE_MODELS = new Set([
   'claude-fable-5',
+  'claude-opus-5',
   'claude-opus-4-8',
-  'claude-opus-4-7',
 ]);
 
 /**
@@ -443,18 +520,24 @@ export const XHIGH_EFFORT_CLAUDE_MODELS = new Set([
  */
 export const MAX_EFFORT_CLAUDE_MODELS = new Set([
   'claude-fable-5',
+  'claude-opus-5',
   'claude-opus-4-8',
-  'claude-opus-4-7',
   'claude-opus-4-6',
   'claude-opus-4-6[1m]',
+  'claude-sonnet-5',
+  'claude-sonnet-4-7',
   'claude-sonnet-4-6',
 ]);
+
+export function codexModelSupportsMaxEffort(modelId: string): boolean {
+  return modelId.trim().toLowerCase().includes('gpt-5.6');
+}
 
 /**
  * Reasoning Effort (thinking depth)
  * Controls the depth of reasoning for AI models
  * Claude API values: low, medium, high, xhigh, max
- * Codex API values: low, medium, high, xhigh
+ * Codex API values: low, medium, high, xhigh; GPT-5.6 also supports max
  */
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -656,6 +739,10 @@ export interface ChatInputBoxProps {
   sdkInstalled?: boolean;
   /** SDK status loading state */
   sdkStatusLoading?: boolean;
+  /** SDK status query failed; chat remains available until the user retries */
+  sdkStatusError?: boolean;
+  /** Retry SDK status query callback */
+  onRetrySdkStatus?: () => void;
   /** Go to install SDK callback */
   onInstallSdk?: () => void;
   /** Show toast message */
